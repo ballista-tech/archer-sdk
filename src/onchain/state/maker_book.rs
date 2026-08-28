@@ -425,6 +425,18 @@ impl MakerBook {
         self.projected_quote_balances().is_ok()
     }
 
+    /// Whether the aggregator would skip this book as stale at `current_slot`.
+    ///
+    /// Mirrors the rule the matching engine applies before considering a book:
+    /// `expiry_in_slots == 0` disables the check, otherwise a book untouched for
+    /// that many slots is passed over. Quoters must apply the same rule or they
+    /// will offer liquidity the program will not fill.
+    #[inline]
+    pub fn is_stale(&self, current_slot: u64) -> bool {
+        self.expiry_in_slots > 0
+            && current_slot.saturating_sub(self.last_updated_slot) >= self.expiry_in_slots
+    }
+
     #[inline(always)]
     pub fn best_bid_price(&self) -> Option<u64> {
         if self.bid_levels[0].is_active() {
