@@ -1,0 +1,33 @@
+[package]
+name = "archer-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Rust SDK for the Archer Protocol — account layouts, instruction builders and quoting math"
+license = "Apache-2.0"
+repository = "https://github.com/ballista-tech/archer-sdk"
+keywords = ["solana", "archer", "defi", "dex"]
+categories = ["cryptography::cryptocurrencies"]
+
+[features]
+default = []
+client = ["dep:solana-client", "dep:solana-sdk", "dep:tokio"]
+
+[dependencies]
+solana-program = "2.3.0"
+borsh = "1.5.7"
+bytemuck = { version = "1.24.0", features = ["derive"] }
+num_enum = "0.5.9"
+thiserror = "1.0.38"
+spl-associated-token-account = { version = "6.0.0", features = ["no-entrypoint"] }
+spl-token = { version = "8.0.0", features = ["no-entrypoint"] }
+spl-token-2022 = { version = "8.0.0", features = ["no-entrypoint"] }
+
+solana-client = { version = "2.3.0", optional = true }
+solana-sdk = { version = "2.3.0", optional = true }
+tokio = { version = "1.40", features = ["full"], optional = true }
+
+[dev-dependencies]
+solana-sdk = "2.3.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(kani)'] }
