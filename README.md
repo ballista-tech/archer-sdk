@@ -9,11 +9,18 @@ against its liquidity, and run a market-making book.
 
 ```toml
 [dependencies]
-archer-sdk = "0.1"
+archer-sdk = "0.0.1"
 
 # with an async RPC client:
-archer-sdk = { version = "0.1", features = ["client"] }
+archer-sdk = { version = "0.0.1", features = ["client"] }
 ```
+
+> **Note — this release targets an unreleased program version.**
+>
+> Reading state, address derivation, the quoting math, and the maker and
+> limit-order instructions all work against the program deployed today.
+> **Swaps, market creation and the delegated-account instructions require the
+> upcoming program upgrade** and will be rejected until it ships
 
 ---
 
