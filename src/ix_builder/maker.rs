@@ -16,7 +16,7 @@ use crate::onchain::{
 
 use crate::config::MarketConfig;
 use crate::error::SdkResult;
-use crate::identity::{append_archer_account, append_authority, Identity};
+use crate::identity::Identity;
 use crate::math::lots::{base_amount_to_lots, quote_amount_to_lots};
 use crate::math::BookUpdate;
 
@@ -44,27 +44,22 @@ pub fn build_update_instructions(
     sequence_number: u64,
 ) -> SdkResult<Vec<Instruction>> {
     let identity = identity.into();
-    let signer = identity.authority();
     let (maker_book_pda, _) = crate::pda::derive_maker_book(market, &identity.maker());
     let mut instructions = Vec::with_capacity(2);
 
     if book_update.mid_price_changed {
-        instructions.push(append_archer_account(
-            crate::onchain::builders::create_update_mid_price_instruction(
-                signer,
+        instructions.push(crate::onchain::builders::create_update_mid_price_instruction(
+                identity,
                 maker_book_pda,
                 UpdateMidPriceParams {
                     new_mid_price_ticks: Ticks::new(book_update.new_mid_price_ticks),
                     sequence_number,
                 },
-            ),
-            &identity,
-        ));
+            ));
     }
 
-    instructions.push(append_archer_account(
-        crate::onchain::builders::create_update_book_instruction(
-            signer,
+    instructions.push(crate::onchain::builders::create_update_book_instruction(
+            identity,
             *market,
             maker_book_pda,
             UpdateBookParams {
@@ -73,9 +68,7 @@ pub fn build_update_instructions(
                 ask_levels: book_update.ask_levels.clone(),
                 sequence_number: sequence_number + 1,
             },
-        ),
-        &identity,
-    ));
+        ));
 
     Ok(instructions)
 }
@@ -93,9 +86,8 @@ pub fn build_update_book_ix(
     let identity = identity.into();
     let (maker_book_pda, _) = crate::pda::derive_maker_book(market, &identity.maker());
 
-    append_archer_account(
-        crate::onchain::builders::create_update_book_instruction(
-            identity.authority(),
+    crate::onchain::builders::create_update_book_instruction(
+            identity,
             *market,
             maker_book_pda,
             UpdateBookParams {
@@ -104,9 +96,7 @@ pub fn build_update_book_ix(
                 ask_levels: book_update.ask_levels.clone(),
                 sequence_number,
             },
-        ),
-        &identity,
-    )
+        )
 }
 
 /// Build an UpdateMidPrice instruction.
@@ -119,17 +109,14 @@ pub fn build_update_mid_price_ix(
     let identity = identity.into();
     let (maker_book_pda, _) = crate::pda::derive_maker_book(market, &identity.maker());
 
-    append_archer_account(
-        crate::onchain::builders::create_update_mid_price_instruction(
-            identity.authority(),
+    crate::onchain::builders::create_update_mid_price_instruction(
+            identity,
             maker_book_pda,
             UpdateMidPriceParams {
                 new_mid_price_ticks: Ticks::new(new_mid_price_ticks),
                 sequence_number,
             },
-        ),
-        &identity,
-    )
+        )
 }
 
 /// Build a ClearBook instruction (zero all orders, unlock all balances).
@@ -143,14 +130,11 @@ pub fn build_clear_book_ix(
     let identity = identity.into();
     let (maker_book_pda, _) = crate::pda::derive_maker_book(market, &identity.maker());
 
-    append_archer_account(
-        crate::onchain::builders::create_clear_book_instruction(
-            identity.authority(),
+    crate::onchain::builders::create_clear_book_instruction(
+            identity,
             maker_book_pda,
             sequence_number,
-        ),
-        &identity,
-    )
+        )
 }
 
 /// Build a CloseMakerBook instruction.
@@ -162,13 +146,10 @@ pub fn build_clear_book_ix(
 ///   3. `build_close_maker_book_ix`     — reclaim the PDA rent
 pub fn build_close_maker_book_ix(identity: impl Into<Identity>, market: &Pubkey) -> Instruction {
     let identity = identity.into();
-    append_authority(
-        crate::onchain::builders::create_close_maker_book_instruction(
-            identity.maker(),
+    crate::onchain::builders::create_close_maker_book_instruction(
+            identity,
             *market,
-        ),
-        &identity,
-    )
+        )
 }
 
 /// Build a SetBookDelegate instruction.
@@ -183,14 +164,11 @@ pub fn build_set_delegate_ix(
     let identity = maker.into();
     let (maker_book_pda, _) = crate::pda::derive_maker_book(market, &identity.maker());
 
-    append_authority(
-        crate::onchain::builders::create_set_maker_book_delegate_instruction(
-            identity.maker(),
+    crate::onchain::builders::create_set_maker_book_delegate_instruction(
+            identity,
             maker_book_pda,
             *delegate,
-        ),
-        &identity,
-    )
+        )
 }
 
 /// Build an InitializeMakerBook instruction.
@@ -205,14 +183,11 @@ pub fn build_initialize_maker_book_ix(
 ) -> Instruction {
     let identity = maker.into();
 
-    append_authority(
-        crate::onchain::builders::create_initialize_maker_book_instruction(
-            identity.maker(),
+    crate::onchain::builders::create_initialize_maker_book_instruction(
+            identity,
             *market,
             kind,
-        ),
-        &identity,
-    )
+        )
 }
 
 /// Build a deposit instruction.
@@ -249,13 +224,12 @@ pub fn build_deposit_ix(
         0
     };
 
-    Ok(append_authority(
-        crate::onchain::builders::create_maker_deposit_funds_instruction(
+    Ok(crate::onchain::builders::create_maker_deposit_funds_instruction(
             MakerDepositFundsParams {
                 base_lots: BaseLots::new(base_lots),
                 quote_lots: QuoteLots::new(quote_lots),
             },
-            identity.maker(),
+            identity,
             maker_book_pda,
             *market,
             config.base_mint,
@@ -266,9 +240,7 @@ pub fn build_deposit_ix(
             config.quote_vault,
             *base_token_program,
             *quote_token_program,
-        ),
-        &identity,
-    ))
+        ))
 }
 
 /// Build a withdrawal instruction.
@@ -305,13 +277,12 @@ pub fn build_withdraw_ix(
         0
     };
 
-    Ok(append_authority(
-        crate::onchain::builders::create_maker_withdraw_funds_instruction(
+    Ok(crate::onchain::builders::create_maker_withdraw_funds_instruction(
             MakerWithdrawFundsParams {
                 base_lots: BaseLots::new(base_lots),
                 quote_lots: QuoteLots::new(quote_lots),
             },
-            identity.maker(),
+            identity,
             maker_book_pda,
             *market,
             config.base_mint,
@@ -322,9 +293,7 @@ pub fn build_withdraw_ix(
             config.quote_vault,
             *base_token_program,
             *quote_token_program,
-        ),
-        &identity,
-    ))
+        ))
 }
 
 /// Build an UpdateExpiryInSlots instruction.
@@ -339,14 +308,11 @@ pub fn build_update_expiry_in_slots_ix(
     let identity = maker.into();
     let (maker_book_pda, _) = crate::pda::derive_maker_book(market, &identity.maker());
 
-    append_archer_account(
-        crate::onchain::builders::create_update_expiry_in_slots_instruction(
-            identity.authority(),
+    crate::onchain::builders::create_update_expiry_in_slots_instruction(
+            identity,
             maker_book_pda,
             expiry_in_slots,
-        ),
-        &identity,
-    )
+        )
 }
 
 /// Build a ToggleBookSuspension instruction (admin suspends/unsuspends a maker).

@@ -4,7 +4,7 @@ use solana_program::{
 };
 
 use crate::onchain::{
-    ArcherInstruction, CollectProtocolFeeParams, InitializeMarketParams, MarketStateHeader,
+    ArcherInstruction, ChangeMarketStatusParams, CollectProtocolFeeParams, InitializeMarketParams, MarketStateHeader, UpdateMakerFeeParams, UpdateTakerFeeParams,
 };
 
 pub fn create_initialize_market_instruction(
@@ -95,4 +95,61 @@ pub fn create_collect_protocol_fee_instruction(
         ]
         .concat(),
     }
+}
+
+pub fn create_change_market_status_instruction(
+    params: ChangeMarketStatusParams,
+    market: Pubkey,
+    admin: Pubkey,
+) -> Instruction {
+    Instruction {
+        program_id: crate::ARCHER_V1_PROGRAM_ID,
+        accounts: vec![
+            AccountMeta::new(market, false),
+            AccountMeta::new_readonly(admin, true),
+        ],
+        data: [
+            ArcherInstruction::ChangeMarketStatus.to_vec(),
+            borsh::to_vec(&params).unwrap(),
+        ]
+        .concat(),
+    }
+}
+
+pub fn create_update_maker_fee_instruction(
+    params: UpdateMakerFeeParams,
+    market: Pubkey,
+    admin: Pubkey,
+) -> Vec<Instruction> {
+    vec![Instruction {
+        program_id: crate::ARCHER_V1_PROGRAM_ID,
+        accounts: vec![
+            AccountMeta::new(market, false),
+            AccountMeta::new_readonly(admin, true),
+        ],
+        data: [
+            ArcherInstruction::UpdateMakerFee.to_vec(),
+            borsh::to_vec(&params).unwrap(),
+        ]
+        .concat(),
+    }]
+}
+
+pub fn create_update_taker_fee_instruction(
+    params: UpdateTakerFeeParams,
+    market: Pubkey,
+    admin: Pubkey,
+) -> Vec<Instruction> {
+    vec![Instruction {
+        program_id: crate::ARCHER_V1_PROGRAM_ID,
+        accounts: vec![
+            AccountMeta::new(market, false),
+            AccountMeta::new_readonly(admin, true),
+        ],
+        data: [
+            ArcherInstruction::UpdateTakerFee.to_vec(),
+            borsh::to_vec(&params).unwrap(),
+        ]
+        .concat(),
+    }]
 }

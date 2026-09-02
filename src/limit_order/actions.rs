@@ -21,7 +21,7 @@ use solana_program::{instruction::Instruction, pubkey::Pubkey};
 
 use crate::config::MarketConfig;
 use crate::error::{ArcherSDKError, SdkResult};
-use crate::identity::{append_archer_account, append_authority, Identity};
+use crate::identity::Identity;
 use crate::math::ticks::price_to_ticks;
 use crate::pda;
 
@@ -120,25 +120,21 @@ pub fn build_place(
     let mut instructions = Vec::with_capacity(3);
 
     if needs_init {
-        instructions.push(append_authority(
-            create_initialize_maker_book_instruction(
-                identity.maker(),
+        instructions.push(create_initialize_maker_book_instruction(
+                identity,
                 *market,
                 crate::onchain::MAKER_KIND_LO,
-            ),
-            &identity,
-        ));
+            ));
     }
 
     if let Some(dep) = deposit {
         if dep.base_lots > 0 || dep.quote_lots > 0 {
-            instructions.push(append_authority(
-                create_maker_deposit_funds_instruction(
+            instructions.push(create_maker_deposit_funds_instruction(
                     MakerDepositFundsParams {
                         base_lots: BaseLots::new(dep.base_lots),
                         quote_lots: QuoteLots::new(dep.quote_lots),
                     },
-                    identity.maker(),
+                    identity,
                     maker_book_pda,
                     *market,
                     config.base_mint,
@@ -149,9 +145,7 @@ pub fn build_place(
                     config.quote_vault,
                     config.base_token_program,
                     config.quote_token_program,
-                ),
-                &identity,
-            ));
+                ));
         }
     }
 
@@ -281,10 +275,7 @@ pub fn build_cancel_all(
     let (maker_book_pda, _) = pda::derive_maker_book(market, &identity.maker());
 
     let mut instructions = Vec::with_capacity(2);
-    instructions.push(append_archer_account(
-        create_clear_book_instruction(identity.authority(), maker_book_pda, next_seq),
-        &identity,
-    ));
+    instructions.push(create_clear_book_instruction(identity, maker_book_pda, next_seq));
 
     append_withdraw(
         &mut instructions,
@@ -347,24 +338,20 @@ pub fn build_replace_all(
 
     let mut instructions = Vec::with_capacity(3);
     if needs_init {
-        instructions.push(append_authority(
-            create_initialize_maker_book_instruction(
-                identity.maker(),
+        instructions.push(create_initialize_maker_book_instruction(
+                identity,
                 *market,
                 crate::onchain::MAKER_KIND_LO,
-            ),
-            &identity,
-        ));
+            ));
     }
     if let Some(dep) = deposit {
         if dep.base_lots > 0 || dep.quote_lots > 0 {
-            instructions.push(append_authority(
-                create_maker_deposit_funds_instruction(
+            instructions.push(create_maker_deposit_funds_instruction(
                     MakerDepositFundsParams {
                         base_lots: BaseLots::new(dep.base_lots),
                         quote_lots: QuoteLots::new(dep.quote_lots),
                     },
-                    identity.maker(),
+                    identity,
                     maker_book_pda,
                     *market,
                     config.base_mint,
@@ -375,9 +362,7 @@ pub fn build_replace_all(
                     config.quote_vault,
                     config.base_token_program,
                     config.quote_token_program,
-                ),
-                &identity,
-            ));
+                ));
         }
     }
     instructions.push(update_book_ix(
@@ -412,10 +397,7 @@ pub fn build_close_book(
     let (maker_book_pda, _) = pda::derive_maker_book(market, &identity.maker());
 
     let mut instructions = Vec::with_capacity(3);
-    instructions.push(append_archer_account(
-        create_clear_book_instruction(identity.authority(), maker_book_pda, next_seq),
-        &identity,
-    ));
+    instructions.push(create_clear_book_instruction(identity, maker_book_pda, next_seq));
     append_withdraw(
         &mut instructions,
         &identity,
@@ -424,10 +406,7 @@ pub fn build_close_book(
         withdraw,
         config,
     );
-    instructions.push(append_authority(
-        create_close_maker_book_instruction(identity.maker(), *market),
-        &identity,
-    ));
+    instructions.push(create_close_maker_book_instruction(identity, *market));
 
     Ok(LimitOrderActionResult {
         instructions,
@@ -503,9 +482,8 @@ fn update_book_ix(
     local: &LocalBook,
 ) -> SdkResult<Instruction> {
     let (bid_levels, ask_levels): (Vec<MakerLevel>, Vec<MakerLevel>) = local.to_maker_levels()?;
-    Ok(append_archer_account(
-        create_update_book_instruction(
-            identity.authority(),
+    Ok(create_update_book_instruction(
+            identity,
             market,
             maker_book_pda,
             UpdateBookParams {
@@ -514,9 +492,7 @@ fn update_book_ix(
                 ask_levels,
                 sequence_number,
             },
-        ),
-        identity,
-    ))
+        ))
 }
 
 fn append_withdraw(
@@ -531,13 +507,12 @@ fn append_withdraw(
     if w.base_lots == 0 && w.quote_lots == 0 {
         return;
     }
-    instructions.push(append_authority(
-        create_maker_withdraw_funds_instruction(
+    instructions.push(create_maker_withdraw_funds_instruction(
             MakerWithdrawFundsParams {
                 base_lots: BaseLots::new(w.base_lots),
                 quote_lots: QuoteLots::new(w.quote_lots),
             },
-            identity.maker(),
+            identity,
             maker_book_pda,
             *market,
             config.base_mint,
@@ -548,7 +523,5 @@ fn append_withdraw(
             config.quote_vault,
             config.base_token_program,
             config.quote_token_program,
-        ),
-        identity,
-    ));
+        ));
 }

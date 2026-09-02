@@ -9,7 +9,6 @@
 //! same functions.
 
 use crate::onchain::state::{ArcherAccount, DelegatedPlatform, MakerBook};
-use solana_program::instruction::{AccountMeta, Instruction};
 use solana_program::pubkey::Pubkey;
 
 /// The maker or taker an instruction acts as.
@@ -153,43 +152,21 @@ impl Identity {
     }
 }
 
-/// Append the trailing authority signer to a **value or lifecycle** instruction
-/// (create book, deposit, withdraw, set book delegate, close book).
-///
-/// Those instructions carry the maker — the ArcherAccount — in their existing
-/// maker slot, and need the signer that authorizes it appended. A wallet identity
-/// signs from the maker slot itself, so nothing is appended and the instruction
-/// is byte-identical to what it has always been.
-#[inline]
-pub(crate) fn append_authority(mut ix: Instruction, identity: &Identity) -> Instruction {
-    if let Identity::ArcherAccount { account, authority } = identity {
-        for meta in ix.accounts.iter_mut() {
-            if meta.pubkey == *account {
-                meta.is_signer = false;
-            }
-        }
-        ix.accounts
-            .push(AccountMeta::new_readonly(*authority, true));
+impl From<&Identity> for crate::onchain::builders::MakerIdentity {
+    fn from(id: &Identity) -> Self {
+        (*id).into()
     }
-    ix
 }
 
-/// Append the ArcherAccount to a **quote** instruction (`update_book`,
-/// `update_mid_price`, `clear_book`, `update_expiry_in_slots`).
-///
-/// These are the other shape: the signer is already account 0, and what the
-/// program needs appended is the account itself, because quote authority is read
-/// live from it rather than from the book. That is what makes a revoked delegate
-/// stop quoting immediately.
-///
-/// Nothing is appended for a wallet identity, so `update_mid_price` keeps the
-/// exact 3-account layout its raw fast path requires.
-#[inline]
-pub(crate) fn append_archer_account(mut ix: Instruction, identity: &Identity) -> Instruction {
-    if let Identity::ArcherAccount { account, .. } = identity {
-        ix.accounts.push(AccountMeta::new_readonly(*account, false));
+impl From<Identity> for crate::onchain::builders::MakerIdentity {
+    fn from(id: Identity) -> Self {
+        match id {
+            Identity::Wallet(w) => Self::Wallet(w),
+            Identity::ArcherAccount { account, authority } => {
+                Self::ArcherAccount { account, authority }
+            }
+        }
     }
-    ix
 }
 
 /// Derive the canonical token account an [`ArcherAccount`] holds a mint in.
