@@ -1,5 +1,5 @@
 use crate::onchain::{
-    ArcherUnit, MakerBook, MakerRegistry, MarketState, MarketStateHeader,
+    ArcherUnit, MakerBook, MakerRegistry, MarketState, MarketStateHeader, MAX_SEQUENCE_JUMP,
 };
 
 use crate::{
@@ -125,4 +125,36 @@ pub fn spread_bps(book: &MakerBook, config: &MarketConfig) -> Option<f64> {
         return None;
     }
     Some((ask - bid) / mid * 10_000.0)
+}
+
+/// The sequence number the book's next update must carry.
+///
+/// Every book-writing instruction (`UpdateBook`, `UpdateMidPrice`, `ClearBook`)
+/// carries a sequence number the program validates against the book's current
+/// one, and the accepted window is bounded on both sides:
+pub fn next_sequence_number(book: &MakerBook) -> u64 {
+    book.last_updated_sequence_number.saturating_add(1)
+}
+
+/// Check a sequence number against the book before building an instruction.
+///
+/// Callers that take their sequence numbers from [`next_sequence_number`] — or
+/// from the `next_sequence_number` field the limit-order actions return — never
+/// need this; it is for callers keeping their own counter.
+pub fn check_sequence_number(book: &MakerBook, proposed: u64) -> SdkResult<()> {
+    let current = book.last_updated_sequence_number;
+
+    if proposed <= current {
+        return Err(ArcherSDKError::StaleSequenceNumber { current, proposed });
+    }
+
+    if proposed - current > MAX_SEQUENCE_JUMP {
+        return Err(ArcherSDKError::SequenceNumberTooFarAhead {
+            current,
+            proposed,
+            max: MAX_SEQUENCE_JUMP,
+        });
+    }
+
+    Ok(())
 }

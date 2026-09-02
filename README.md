@@ -81,7 +81,7 @@ requires, before you commit to it:
 ```rust
 use archer_sdk::math::fees;
 
-let cost      = fees::estimate_taker_fee(1_000.0, &config);
+let cost      = fees::estimate_taker_fees(1_000.0, builder_fee_ppm, &config);
 let effective = fees::effective_taker_price(148.50, &config);
 let margin    = fees::estimate_required_quote_margin(&quotes, &config)?;
 ```

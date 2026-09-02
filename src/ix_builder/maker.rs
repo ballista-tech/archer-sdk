@@ -175,12 +175,21 @@ pub fn build_close_maker_book_ix(identity: impl Into<Identity>, market: &Pubkey)
 ///
 /// The delegate can submit UpdateBook and UpdateMidPrice on the maker's behalf.
 /// Pass `Pubkey::default()` to revoke delegation.
-pub fn build_set_delegate_ix(maker: &Pubkey, market: &Pubkey, delegate: &Pubkey) -> Instruction {
-    let (maker_book_pda, _) = crate::pda::derive_maker_book(market, maker);
-    crate::onchain::builders::create_set_maker_book_delegate_instruction(
-        *maker,
-        maker_book_pda,
-        *delegate,
+pub fn build_set_delegate_ix(
+    maker: impl Into<Identity>,
+    market: &Pubkey,
+    delegate: &Pubkey,
+) -> Instruction {
+    let identity = maker.into();
+    let (maker_book_pda, _) = crate::pda::derive_maker_book(market, &identity.maker());
+
+    append_authority(
+        crate::onchain::builders::create_set_maker_book_delegate_instruction(
+            identity.maker(),
+            maker_book_pda,
+            *delegate,
+        ),
+        &identity,
     )
 }
 
@@ -189,8 +198,21 @@ pub fn build_set_delegate_ix(maker: &Pubkey, market: &Pubkey, delegate: &Pubkey)
 /// Creates the maker book PDA account. Call once per (market, maker) pair
 /// before any other maker operations. `kind`: `crate::onchain::MAKER_KIND_MM` (0) or
 /// `crate::onchain::MAKER_KIND_LO` (1).
-pub fn build_initialize_maker_book_ix(maker: &Pubkey, market: &Pubkey, kind: u8) -> Instruction {
-    crate::onchain::builders::create_initialize_maker_book_instruction(*maker, *market, kind)
+pub fn build_initialize_maker_book_ix(
+    maker: impl Into<Identity>,
+    market: &Pubkey,
+    kind: u8,
+) -> Instruction {
+    let identity = maker.into();
+
+    append_authority(
+        crate::onchain::builders::create_initialize_maker_book_instruction(
+            identity.maker(),
+            *market,
+            kind,
+        ),
+        &identity,
+    )
 }
 
 /// Build a deposit instruction.
@@ -310,15 +332,20 @@ pub fn build_withdraw_ix(
 /// Sets the max slots a maker book may remain un-refreshed before the
 /// aggregator skips it. `0` disables the expiry check.
 pub fn build_update_expiry_in_slots_ix(
-    maker: &Pubkey,
+    maker: impl Into<Identity>,
     market: &Pubkey,
     expiry_in_slots: u64,
 ) -> Instruction {
-    let (maker_book_pda, _) = crate::pda::derive_maker_book(market, maker);
-    crate::onchain::builders::create_update_expiry_in_slots_instruction(
-        *maker,
-        maker_book_pda,
-        expiry_in_slots,
+    let identity = maker.into();
+    let (maker_book_pda, _) = crate::pda::derive_maker_book(market, &identity.maker());
+
+    append_archer_account(
+        crate::onchain::builders::create_update_expiry_in_slots_instruction(
+            identity.authority(),
+            maker_book_pda,
+            expiry_in_slots,
+        ),
+        &identity,
     )
 }
 

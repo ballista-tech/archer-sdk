@@ -17,19 +17,46 @@ pub fn estimate_maker_fee(fill_base_amount: f64, fill_price: f64, config: &Marke
     quote_amount * (config.maker_fee_ppm as f64) / 1_000_000.0
 }
 
-/// Estimate taker fee for a swap, in quote token units.
-///
-/// Positive = fee charged. Negative = rebate.
-pub fn estimate_taker_fee(trade_quote_amount: f64, config: &MarketConfig) -> f64 {
-    trade_quote_amount * (config.taker_fee_ppm as f64) / 1_000_000.0
+/// What a taker pays on top of the notional, in quote token units.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TakerFees {
+    /// The market's protocol fee. Negative on a market that rebates takers.
+    pub protocol: f64,
+
+    /// The builder fee, if the swap carries a builder code.
+    pub builder: f64,
 }
 
-/// Estimate effective price after taker fee.
+/// Estimate what a swap costs the taker beyond the notional.
 ///
-/// For a taker **buying** base: effective price is higher (pays fee).
-/// For a taker **selling** base: effective price is lower (pays fee).
-pub fn effective_taker_price(price: f64, is_buying_base: bool, config: &MarketConfig) -> f64 {
-    let fee_multiplier = config.taker_fee_ppm as f64 / 1_000_000.0;
+/// `builder_fee_ppm` must match the value going into the swap's
+/// [`SwapParams`](archer_v1::swap_types::SwapParams); pass `0` when the swap
+/// carries no builder code.
+pub fn estimate_taker_fees(
+    trade_quote_amount: f64,
+    builder_fee_ppm: u32,
+    config: &MarketConfig,
+) -> TakerFees {
+    let protocol = trade_quote_amount * (config.taker_fee_ppm as f64) / 1_000_000.0;
+    let builder = trade_quote_amount * (builder_fee_ppm as f64) / 1_000_000.0;
+
+    TakerFees {
+        protocol,
+        builder,
+    }
+}
+
+/// Estimate the per-unit price a taker actually gets, after all fees.
+///
+/// Buying base: higher than `price` (the fees are paid on top). Selling base:
+/// lower (they come out of the proceeds).
+pub fn effective_taker_price(
+    price: f64,
+    is_buying_base: bool,
+    builder_fee_ppm: u32,
+    config: &MarketConfig,
+) -> f64 {
+    let fee_multiplier = (config.taker_fee_ppm as f64 + builder_fee_ppm as f64) / 1_000_000.0;
     if is_buying_base {
         price * (1.0 + fee_multiplier)
     } else {

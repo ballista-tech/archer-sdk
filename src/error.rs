@@ -94,6 +94,22 @@ pub enum ArcherSDKError {
 
     #[error("permissionless markets must launch at exactly maker {} ppm / taker {} ppm, got maker {maker_ppm} / taker {taker_ppm}", crate::onchain::PERMISSIONLESS_MAKER_FEE_PPM, crate::onchain::PERMISSIONLESS_TAKER_FEE_PPM)]
     FixedFeeConfigRequired { maker_ppm: i32, taker_ppm: i32 },
+
+    #[error("builder fee of {requested} ppm exceeds the protocol maximum of {max} ppm")]
+    BuilderFeeTooHigh { requested: u32, max: u32 },
+
+    #[error("builder fee of {requested} ppm exceeds the ArcherAccount's owner-set cap of {cap} ppm")]
+    BuilderFeeExceedsAccountCap { requested: u32, cap: u32 },
+
+    #[error("sequence number {proposed} is {} ahead of the book's current {current}; the maximum jump is {max}", proposed - current)]
+    SequenceNumberTooFarAhead {
+        current: u64,
+        proposed: u64,
+        max: u64,
+    },
+
+    #[error("sequence number {proposed} is not ahead of the book's current {current}")]
+    StaleSequenceNumber { current: u64, proposed: u64 },
 }
 
 pub type SdkResult<T> = Result<T, ArcherSDKError>;

@@ -178,6 +178,9 @@ pub enum ArcherError {
     #[error("Sequence number jumps too far ahead of the book's current one")]
     SequenceNumberTooFarAhead = 522,
 
+    #[error("Maker book is suspended; it cannot be closed")]
+    MakerBookSuspended = 523,
+
     // 6xx — Fee
     #[error("Invalid maker fee")]
     InvalidFee = 600,
@@ -199,6 +202,9 @@ pub enum ArcherError {
 
     #[error("Permissionless markets must launch with the fixed protocol fee config")]
     InvalidPermissionlessFeeConfig = 608,
+
+    #[error("Taker fee cannot be negative; only the maker fee may be a rebate")]
+    NegativeTakerFeeNotAllowed = 609,
 
     // 7xx — Swap execution
     #[error("Invalid swap side")]
@@ -246,7 +252,7 @@ pub enum ArcherError {
     InvalidArcherAccount = 1000,
 
     #[error("Signer is neither the ArcherAccount's owner nor its delegate")]
-    UnauthorizedAccountDelegate = 1001,
+    UnauthorizedArcherAccountDelegate = 1001,
 
     #[error("Token account is not owned by the ArcherAccount")]
     InvalidArcherAccountTokenAccount = 1002,

@@ -162,7 +162,12 @@ impl Identity {
 /// is byte-identical to what it has always been.
 #[inline]
 pub(crate) fn append_authority(mut ix: Instruction, identity: &Identity) -> Instruction {
-    if let Identity::ArcherAccount { authority, .. } = identity {
+    if let Identity::ArcherAccount { account, authority } = identity {
+        for meta in ix.accounts.iter_mut() {
+            if meta.pubkey == *account {
+                meta.is_signer = false;
+            }
+        }
         ix.accounts
             .push(AccountMeta::new_readonly(*authority, true));
     }

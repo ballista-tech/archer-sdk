@@ -145,6 +145,14 @@ impl MarketStateHeader {
         Ok(())
     }
 
+    pub fn validate_taker_fee_ppm(fee_ppm: i32) -> Result<(), ArcherError> {
+        Self::validate_fee_ppm(fee_ppm)?;
+        if fee_ppm < 0 {
+            return Err(ArcherError::NegativeTakerFeeNotAllowed);
+        }
+        Ok(())
+    }
+
     pub fn validate_permissionless_fee_config(
         maker_fee_ppm: i32,
         taker_fee_ppm: i32,
@@ -370,7 +378,7 @@ impl MarketStateHeader {
         Self::validate_raw_base_units(raw_base_units_per_base_unit, base_decimals)?;
 
         Self::validate_fee_ppm(maker_fee_ppm)?;
-        Self::validate_fee_ppm(taker_fee_ppm)?;
+        Self::validate_taker_fee_ppm(taker_fee_ppm)?;
 
         Ok(())
     }

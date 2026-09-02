@@ -15,6 +15,7 @@
 //! ordinary associated token accounts, so funding is a plain SPL transfer and
 //! funding its rent is a plain system transfer.
 
+use crate::onchain::MAX_BUILDER_FEE_PPM;
 use crate::onchain::state::{ArcherAccount, DelegatedPlatform, MakerBook};
 use solana_program::{instruction::Instruction, pubkey::Pubkey, system_instruction};
 
@@ -184,4 +185,24 @@ pub fn check_book_delegate_change(
         attempted: *new_delegate,
         current: account.delegate,
     })
+}
+
+/// Check a swap's `builder_fee_ppm` against the ceiling this account's owner
+/// authorized, before building the instruction.
+pub fn check_builder_fee(account: &ArcherAccount, builder_fee_ppm: u32) -> SdkResult<()> {
+    if builder_fee_ppm > MAX_BUILDER_FEE_PPM {
+        return Err(ArcherSDKError::BuilderFeeTooHigh {
+            requested: builder_fee_ppm,
+            max: MAX_BUILDER_FEE_PPM,
+        });
+    }
+
+    if builder_fee_ppm > account.max_builder_fee_ppm {
+        return Err(ArcherSDKError::BuilderFeeExceedsAccountCap {
+            requested: builder_fee_ppm,
+            cap: account.max_builder_fee_ppm,
+        });
+    }
+
+    Ok(())
 }

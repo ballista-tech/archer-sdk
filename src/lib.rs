@@ -53,6 +53,9 @@ pub mod constants {
 pub mod prelude {
     #[cfg(feature = "client")]
     pub use crate::client::ArcherClient;
+    pub use crate::accounts;
+    pub use crate::accounts::{check_sequence_number, next_sequence_number};
+    pub use crate::archer_account;
     pub use crate::config::MarketConfig;
     pub use crate::constants;
     pub use crate::error::{ArcherSDKError, SdkResult};
@@ -67,7 +70,10 @@ pub mod prelude {
         LimitOrder, LimitOrderBookView, LimitOrderId, LimitOrderRung, LocalBook, NewLimitOrder,
     };
     pub use crate::math::{
-        levels::build_book_from_spread, levels::build_book_update, BookUpdate, Quote, TwoSidedQuote,
+        fees::{effective_taker_price, estimate_taker_fees, TakerFees},
+        levels::build_book_from_spread,
+        levels::build_book_update,
+        BookUpdate, Quote, TwoSidedQuote,
     };
     pub use crate::onchain::state::DelegatedPlatform;
     pub use crate::pda;

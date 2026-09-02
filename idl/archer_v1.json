@@ -1,0 +1,3368 @@
+{
+  "version": "0.1.0",
+  "name": "archer_v1",
+  "docs": [
+    "Archer v1 - a synchronous, maker-book based DEX on Solana."
+  ],
+  "metadata": {
+    "address": "Archer8kgiavM61GyusMzaaS2ft5sALtNsD1HxkUPMhy",
+    "origin": "shank"
+  },
+  "instructions": [
+    {
+      "name": "InitializeMarket",
+      "docs": [
+        "Initialize a new market.",
+        "",
+        "Creates the market state PDA (272 bytes) and idempotently creates both vault",
+        "ATAs, owned by the market PDA. The market starts Active.",
+        "",
+        "Permissionless. Unless the admin is ARCHER_GLOBAL_AUTHORITY the fees must be",
+        "exactly PERMISSIONLESS_MAKER_FEE_PPM (400) / PERMISSIONLESS_TAKER_FEE_PPM (700).",
+        "The admin is the market's revenue seat: it collects the 80% share via",
+        "CollectProtocolFee, but holds no control over fees, status or the registry.",
+        "",
+        "baseDecimals / quoteDecimals must match the on-chain mints, and either mint is",
+        "rejected if it carries an unsupported Token-2022 extension.",
+        "",
+        "takerFeePpm may never be negative - see UpdateTakerFee. makerFeePpm may be."
+      ],
+      "accounts": [
+        {
+          "name": "marketAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market state PDA: [\"market\", marketId]"
+        },
+        {
+          "name": "adminAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "Market admin / revenue seat; stored as market.admin"
+        },
+        {
+          "name": "baseMint",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Base token mint"
+        },
+        {
+          "name": "quoteMint",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Quote token mint"
+        },
+        {
+          "name": "baseVaultAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "ATA(marketPda, baseMint, baseTokenProgram); created here"
+        },
+        {
+          "name": "quoteVaultAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "ATA(marketPda, quoteMint, quoteTokenProgram); created here"
+        },
+        {
+          "name": "payerAccount",
+          "isMut": true,
+          "isSigner": true,
+          "desc": "Pays the market and vault rent"
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "System program"
+        },
+        {
+          "name": "baseTokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "SPL Token or Token-2022; must own baseMint"
+        },
+        {
+          "name": "quoteTokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "SPL Token or Token-2022; must own quoteMint"
+        },
+        {
+          "name": "ataProgram",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "SPL Associated Token Account program"
+        },
+        {
+          "name": "rentAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Rent sysvar"
+        }
+      ],
+      "args": [
+        {
+          "name": "initializeMarketParams",
+          "type": {
+            "defined": "InitializeMarketParams"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 0
+      }
+    },
+    {
+      "name": "ChangeMarketStatus",
+      "docs": [
+        "Change market status (Active / Paused / Closed).",
+        "",
+        "ARCHER_GLOBAL_AUTHORITY only, on any market. Valid transitions:",
+        "  Active        -> Paused",
+        "  Paused        -> Active",
+        "  Active/Paused -> Closed (irreversible; Closed rejects every transition)"
+      ],
+      "accounts": [
+        {
+          "name": "marketAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market state account"
+        },
+        {
+          "name": "adminAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "ARCHER_GLOBAL_AUTHORITY. Not the market admin."
+        }
+      ],
+      "args": [
+        {
+          "name": "changeMarketStatusParams",
+          "type": {
+            "defined": "ChangeMarketStatusParams"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 1
+      }
+    },
+    {
+      "name": "UpdateMakerFee",
+      "docs": [
+        "Update the maker fee.",
+        "",
+        "ARCHER_GLOBAL_AUTHORITY only, on any market, and only while the market is",
+        "paused. A market admin sets its fees once at creation and can never change them.",
+        "",
+        "makerFeePpm must lie within [MIN_FEE_PPM, MAX_FEE_PPM] = [-50000, 100000]",
+        "(-500bps to 1000bps; negative is a rebate), and makerFeePpm + takerFeePpm must",
+        "stay >= 0."
+      ],
+      "accounts": [
+        {
+          "name": "marketAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market state account"
+        },
+        {
+          "name": "adminAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "ARCHER_GLOBAL_AUTHORITY. Not the market admin."
+        }
+      ],
+      "args": [
+        {
+          "name": "updateMakerFeeParams",
+          "type": {
+            "defined": "UpdateMakerFeeParams"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 3
+      }
+    },
+    {
+      "name": "UpdateTakerFee",
+      "docs": [
+        "Update the taker fee.",
+        "",
+        "ARCHER_GLOBAL_AUTHORITY only, on any market, and only while the market is",
+        "paused. A market admin sets its fees once at creation and can never change them.",
+        "",
+        "takerFeePpm must lie within [0, MAX_FEE_PPM] = [0, 100000] (0 to 1000bps) and",
+        "makerFeePpm + takerFeePpm must stay >= 0."
+      ],
+      "accounts": [
+        {
+          "name": "marketAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market state account"
+        },
+        {
+          "name": "adminAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "ARCHER_GLOBAL_AUTHORITY. Not the market admin."
+        }
+      ],
+      "args": [
+        {
+          "name": "updateTakerFeeParams",
+          "type": {
+            "defined": "UpdateTakerFeeParams"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 4
+      }
+    },
+    {
+      "name": "TransferAdmin",
+      "docs": [
+        "Transfer the market's revenue seat.",
+        "",
+        "Moves the 80% fee share and the right to call CollectProtocolFee to a new",
+        "address. It carries no control over fees, status or the maker registry.",
+        "Irreversible. The new admin must be non-default and different from the current.",
+        "",
+        "Takes no instruction data - the new admin is read from account 2."
+      ],
+      "accounts": [
+        {
+          "name": "marketAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market state account"
+        },
+        {
+          "name": "currentAdminAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "Must equal market.admin"
+        },
+        {
+          "name": "newAdminAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "New admin pubkey"
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 5
+      }
+    },
+    {
+      "name": "InitializeMakerBook",
+      "docs": [
+        "Initialize a micro order book (MakerBook) for a market maker.",
+        "",
+        "`kind` is init-only and immutable: 0 = MM (levels offset from midPriceTicks),",
+        "1 = LO (limit-order book; midPriceTicks pinned to 0, so a level's",
+        "priceOffsetTicks IS its absolute price tick). Any other value is rejected.",
+        "Empty instruction data defaults to MM, but always send the byte explicitly.",
+        "",
+        "Two funding shapes, selected by whether makerAccount is program-owned:",
+        "  - wallet maker: it signs and pays the book's rent.",
+        "  - ArcherAccount maker: makerAccount is the ArcherAccount PDA and pays the rent",
+        "    from its own lamports (down to its rent-exempt floor) without signing;",
+        "    authorityAccount holds the signing owner or delegate. The new book records",
+        "    makerIsArcherAccount = 1.",
+        "",
+        "The market must be Active."
+      ],
+      "accounts": [
+        {
+          "name": "makerAccount",
+          "isMut": true,
+          "isSigner": true,
+          "desc": "Wallet maker, which signs; OR the book's ArcherAccount PDA, which cannot sign - in that case pass it with isSigner false and append authorityAccount as the trailing signer. Pays the book's rent either way."
+        },
+        {
+          "name": "makerBookAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "MakerBook PDA: [\"maker\", market, maker]"
+        },
+        {
+          "name": "marketAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Market state account; must be Active"
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "System program"
+        },
+        {
+          "name": "authorityAccount",
+          "isMut": false,
+          "isSigner": true,
+          "isOptional": true,
+          "desc": "OPTIONAL. ArcherAccount owner or delegate, signing on the PDA's behalf. REQUIRED iff the maker slot holds an ArcherAccount PDA (a program-owned account); must be omitted otherwise."
+        }
+      ],
+      "args": [
+        {
+          "name": "kind",
+          "type": "u8"
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 6
+      }
+    },
+    {
+      "name": "UpdateBook",
+      "docs": [
+        "Replace the resting bid/ask levels of a maker book.",
+        "",
+        "WIRE LAYOUT: this instruction does not use borsh. The data buffer is the raw",
+        "536-byte UpdateBookData C struct, whose first byte IS this instruction's",
+        "discriminator (7). Encoding u8(7) || UpdateBookData as defined here therefore",
+        "reproduces the on-chain layout byte for byte:",
+        "  [0]         discriminator = 7",
+        "  [1..9)      sequenceNumber   u64 LE",
+        "  [9..17)     midPriceTicks    u64 LE",
+        "  [17]        numBids          u8 (<= MAX_LEVELS)",
+        "  [18]        numAsks          u8 (<= MAX_LEVELS)",
+        "  [19..24)    padding",
+        "  [24..280)   levels[0..16]  - bids",
+        "  [280..536)  levels[16..32] - asks",
+        "",
+        "Bids and asks each occupy a fixed 16-slot region; numBids/numAsks say how many",
+        "leading slots of each are live. sequenceNumber must exceed",
+        "makerBook.lastUpdatedSequenceNumber by at least 1 and at most MAX_SEQUENCE_JUMP.",
+        "midPriceTicks must be 0 for LO books, which also emit a place/resize/cancel",
+        "event per changed level."
+      ],
+      "accounts": [
+        {
+          "name": "makerAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "Book maker or book delegate; for an ArcherAccount book, its owner or delegate"
+        },
+        {
+          "name": "makerBookAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "MakerBook PDA"
+        },
+        {
+          "name": "marketAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Market state account; must equal makerBook.market"
+        },
+        {
+          "name": "archerAccount",
+          "isMut": false,
+          "isSigner": false,
+          "isOptional": true,
+          "desc": "OPTIONAL. The book's ArcherAccount PDA, read to authorize the signer. REQUIRED iff makerBook.makerIsArcherAccount == 1; must be omitted otherwise."
+        }
+      ],
+      "args": [
+        {
+          "name": "updateBookData",
+          "type": {
+            "defined": "UpdateBookData"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 7
+      }
+    },
+    {
+      "name": "UpdateMidPrice",
+      "docs": [
+        "Shift the reference (mid) price, moving every level with it.",
+        "",
+        "Cheaper than rewriting the whole book when only the reference moves. Rejected",
+        "for LO books, whose mid price is pinned to 0. The quote-side rebalance is",
+        "deferred: only midPriceTicks and midAtLastSync move here, and readers replay the",
+        "pending shift lazily.",
+        "",
+        "WIRE LAYOUT: raw, 17 bytes - u8(8) || sequenceNumber u64 LE || newMidPriceTicks u64 LE.",
+        "",
+        "ACCOUNT 2 IS PROBED, NOT FIXED. If it parses as a Clock sysvar the slot is read",
+        "from it and archerAccount moves to index 3; otherwise the program falls back to",
+        "the Clock::get() syscall and index 2 is taken as archerAccount. All four shapes",
+        "are valid:",
+        "  [maker, book]                  [maker, book, archerAccount]",
+        "  [maker, book, clock]           [maker, book, clock, archerAccount]",
+        "",
+        "The 3-account [maker, book, clock] shape on a wallet-owned book takes a",
+        "raw-offset fast path in the entrypoint; every other shape falls through to the",
+        "normal handler with identical behavior."
+      ],
+      "accounts": [
+        {
+          "name": "makerAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "Book maker or book delegate; for an ArcherAccount book, its owner or delegate"
+        },
+        {
+          "name": "makerBookAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "MakerBook PDA"
+        },
+        {
+          "name": "clockSysvar",
+          "isMut": false,
+          "isSigner": false,
+          "isOptional": true,
+          "desc": "OPTIONAL Clock sysvar; when supplied the slot is read directly instead of via the Clock::get() syscall"
+        },
+        {
+          "name": "archerAccount",
+          "isMut": false,
+          "isSigner": false,
+          "isOptional": true,
+          "desc": "OPTIONAL. The book's ArcherAccount PDA, read to authorize the signer. REQUIRED iff makerBook.makerIsArcherAccount == 1; must be omitted otherwise. Sits at index 2 when clockSysvar is omitted."
+        }
+      ],
+      "args": [
+        {
+          "name": "sequenceNumber",
+          "type": "u64"
+        },
+        {
+          "name": "newMidPriceTicks",
+          "type": "u64"
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 8
+      }
+    },
+    {
+      "name": "ClearBook",
+      "docs": [
+        "Clear every resting level and release locked balances back to free.",
+        "",
+        "WIRE LAYOUT: raw, 9 bytes - u8(9) || sequenceNumber u64 LE.",
+        "",
+        "LO books emit a LimitOrderCanceledEvent per cleared level."
+      ],
+      "accounts": [
+        {
+          "name": "makerAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "Book maker or book delegate; for an ArcherAccount book, its owner or delegate"
+        },
+        {
+          "name": "makerBookAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "MakerBook PDA"
+        },
+        {
+          "name": "archerAccount",
+          "isMut": false,
+          "isSigner": false,
+          "isOptional": true,
+          "desc": "OPTIONAL. The book's ArcherAccount PDA, read to authorize the signer. REQUIRED iff makerBook.makerIsArcherAccount == 1; must be omitted otherwise."
+        }
+      ],
+      "args": [
+        {
+          "name": "sequenceNumber",
+          "type": "u64"
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 9
+      }
+    },
+    {
+      "name": "SetBookDelegate",
+      "docs": [
+        "Set or clear the maker book's quoting delegate.",
+        "",
+        "A delegate may update/clear quotes and the mid price, but can never deposit,",
+        "withdraw or close the book. Only the book's maker may set it.",
+        "",
+        "Takes no instruction data - the new delegate is read from account 2. Pass the",
+        "default pubkey (all zeroes) to clear."
+      ],
+      "accounts": [
+        {
+          "name": "makerAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "Wallet maker, which signs; OR the book's ArcherAccount PDA, which cannot sign - in that case pass it with isSigner false and append authorityAccount as the trailing signer."
+        },
+        {
+          "name": "makerBookAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "MakerBook PDA"
+        },
+        {
+          "name": "delegateAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "New delegate, or Pubkey::default() to clear"
+        },
+        {
+          "name": "authorityAccount",
+          "isMut": false,
+          "isSigner": true,
+          "isOptional": true,
+          "desc": "OPTIONAL. ArcherAccount owner or delegate, signing on the PDA's behalf. REQUIRED iff the maker slot holds an ArcherAccount PDA (a program-owned account); must be omitted otherwise."
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 10
+      }
+    },
+    {
+      "name": "MakerDepositFunds",
+      "docs": [
+        "Deposit base and/or quote funds into a maker book's free balance.",
+        "",
+        "Amounts are in lots; passing 0 for both sides is a no-op. Token-2022 transfer",
+        "fees are grossed up so the vault receives the full requested amount. The market",
+        "must be Active.",
+        "",
+        "Both vaults and both maker token accounts must be writable even when only one",
+        "side carries a non-zero amount."
+      ],
+      "accounts": [
+        {
+          "name": "marketAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Market state account; must be Active"
+        },
+        {
+          "name": "makerBookAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "MakerBook PDA"
+        },
+        {
+          "name": "makerAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "Wallet maker, which signs; OR the book's ArcherAccount PDA, which cannot sign - in that case pass it with isSigner false and append authorityAccount as the trailing signer. Only the transfer authority - never written."
+        },
+        {
+          "name": "baseMint",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Base token mint"
+        },
+        {
+          "name": "quoteMint",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Quote token mint"
+        },
+        {
+          "name": "baseVaultAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market's base token vault; written by the transfer"
+        },
+        {
+          "name": "quoteVaultAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market's quote token vault; written by the transfer"
+        },
+        {
+          "name": "makerBaseTokenAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Maker's base token account"
+        },
+        {
+          "name": "makerQuoteTokenAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Maker's quote token account"
+        },
+        {
+          "name": "baseTokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Base token program"
+        },
+        {
+          "name": "quoteTokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Quote token program"
+        },
+        {
+          "name": "authorityAccount",
+          "isMut": false,
+          "isSigner": true,
+          "isOptional": true,
+          "desc": "OPTIONAL. ArcherAccount owner or delegate, signing on the PDA's behalf. REQUIRED iff the maker slot holds an ArcherAccount PDA (a program-owned account); must be omitted otherwise."
+        }
+      ],
+      "args": [
+        {
+          "name": "makerDepositFundsParams",
+          "type": {
+            "defined": "MakerDepositFundsParams"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 11
+      }
+    },
+    {
+      "name": "MakerWithdrawFunds",
+      "docs": [
+        "Withdraw base and/or quote funds from a maker book's free balance.",
+        "",
+        "Amounts are in lots and may not exceed the free (unlocked) balance. Transfers",
+        "out of the vaults are signed by the market PDA. Allowed regardless of market",
+        "status, so makers can always exit.",
+        "",
+        "Both vaults and both maker token accounts must be writable even when only one",
+        "side carries a non-zero amount."
+      ],
+      "accounts": [
+        {
+          "name": "marketAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Market state account"
+        },
+        {
+          "name": "makerBookAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "MakerBook PDA"
+        },
+        {
+          "name": "makerAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "Wallet maker, which signs; OR the book's ArcherAccount PDA, which cannot sign - in that case pass it with isSigner false and append authorityAccount as the trailing signer. Only the transfer authority - never written."
+        },
+        {
+          "name": "baseMint",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Base token mint"
+        },
+        {
+          "name": "quoteMint",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Quote token mint"
+        },
+        {
+          "name": "baseVaultAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market's base token vault; written by the transfer"
+        },
+        {
+          "name": "quoteVaultAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market's quote token vault; written by the transfer"
+        },
+        {
+          "name": "makerBaseTokenAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Maker's base token account"
+        },
+        {
+          "name": "makerQuoteTokenAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Maker's quote token account"
+        },
+        {
+          "name": "baseTokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Base token program"
+        },
+        {
+          "name": "quoteTokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Quote token program"
+        },
+        {
+          "name": "authorityAccount",
+          "isMut": false,
+          "isSigner": true,
+          "isOptional": true,
+          "desc": "OPTIONAL. ArcherAccount owner or delegate, signing on the PDA's behalf. REQUIRED iff the maker slot holds an ArcherAccount PDA (a program-owned account); must be omitted otherwise."
+        }
+      ],
+      "args": [
+        {
+          "name": "makerWithdrawFundsParams",
+          "type": {
+            "defined": "MakerWithdrawFundsParams"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 12
+      }
+    },
+    {
+      "name": "ToggleBookSuspension",
+      "docs": [
+        "Toggle a maker book between Active (1) and Suspended (2).",
+        "",
+        "ARCHER_GLOBAL_AUTHORITY only, on any market. A suspended book is skipped by the",
+        "matching engine.",
+        "",
+        "Takes no instruction data - the status is flipped, not supplied."
+      ],
+      "accounts": [
+        {
+          "name": "marketAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Market state account; read only, for the book/market binding check"
+        },
+        {
+          "name": "adminAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "ARCHER_GLOBAL_AUTHORITY. Not the market admin."
+        },
+        {
+          "name": "makerBookAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "MakerBook PDA to suspend or reactivate"
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 13
+      }
+    },
+    {
+      "name": "CollectProtocolFee",
+      "docs": [
+        "Collect accrued protocol fees from the quote vault.",
+        "",
+        "Market admin only. ARCHER_PROTOCOL_FEE_PPM (200000 ppm = 20%) of the collected",
+        "amount goes to the Archer treasury and the remainder to the admin. Collecting 0",
+        "is a no-op."
+      ],
+      "accounts": [
+        {
+          "name": "adminAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "Must equal market.admin"
+        },
+        {
+          "name": "marketAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market state account"
+        },
+        {
+          "name": "quoteMint",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Quote token mint"
+        },
+        {
+          "name": "quoteVaultAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market's quote token vault; source of both transfers"
+        },
+        {
+          "name": "adminQuoteTokenAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Admin's quote token account"
+        },
+        {
+          "name": "archerTreasury",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Archer Exchange treasury: ELGWUVJD6NBNLyJ5Xv98PzoSg9Wh2Y8Bwep9JZgm9nuo"
+        },
+        {
+          "name": "treasuryQuoteTokenAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Treasury's ATA for quoteMint"
+        },
+        {
+          "name": "tokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Quote token program"
+        }
+      ],
+      "args": [
+        {
+          "name": "collectProtocolFeeParams",
+          "type": {
+            "defined": "CollectProtocolFeeParams"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 14
+      }
+    },
+    {
+      "name": "Swap",
+      "docs": [
+        "Execute a synchronous Fill-or-Kill swap against aggregated maker liquidity,",
+        "with immediate token settlement.",
+        "",
+        "An optional builder (\"frontend\") fee - builderFeePpm in the params, capped at",
+        "MAX_BUILDER_FEE_PPM (10000 ppm = 1%) - is charged on the quote notional traded,",
+        "paid by the taker ON TOP of the protocol fee and forwarded to builderFeeWallet.",
+        "It never reduces protocol or maker revenue. builderFeeWallet must be supplied",
+        "and writable even when the fee is 0.",
+        "",
+        "An 18-byte SwapParams payload (predating builderFeePpm) is still accepted and",
+        "read as a 0 fee.",
+        "",
+        "REMAINING ACCOUNTS - not expressible positionally in this IDL. Append them to",
+        "`keys` after the fixed accounts, in this order:",
+        "  [writable] makerBookAccounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (64) MakerBook PDAs to match against. At least one is required; each must be writable and program-owned; duplicates are rejected.",
+        "  [] eventAuthority - OPTIONAL, must be LAST if present: Fzo6R5MrDSComspzpQNiieGaYVpNksqeLC27CKTPMTm1. When supplied, SyncFillEvent is emitted via a self-CPI instead of sol_log_data. MakerFillEvent always uses sol_log_data.",
+        "",
+        "BACKWARD COMPAT: legacy callers may still pass the instructions sysvar between",
+        "quoteTokenProgram and the first maker book; the program detects and skips it.",
+        "New callers must omit it."
+      ],
+      "accounts": [
+        {
+          "name": "taker",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "Taker authority; token authority for the input transfer"
+        },
+        {
+          "name": "marketAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market state account; must be Active"
+        },
+        {
+          "name": "builderFeeWallet",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Quote token account receiving the builder fee. Required and writable even when builderFeePpm is 0."
+        },
+        {
+          "name": "baseMint",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Base token mint"
+        },
+        {
+          "name": "quoteMint",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Quote token mint"
+        },
+        {
+          "name": "baseVault",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market's base token vault PDA; written by settlement"
+        },
+        {
+          "name": "quoteVault",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market's quote token vault PDA; written by settlement"
+        },
+        {
+          "name": "takerBaseTokenAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Taker's base token account"
+        },
+        {
+          "name": "takerQuoteTokenAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Taker's quote token account"
+        },
+        {
+          "name": "baseTokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Base token program"
+        },
+        {
+          "name": "quoteTokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Quote token program"
+        }
+      ],
+      "args": [
+        {
+          "name": "swapParams",
+          "type": {
+            "defined": "SwapParams"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 15
+      },
+      "remainingAccounts": [
+        "[writable] makerBookAccounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (64) MakerBook PDAs to match against. At least one is required; each must be writable and program-owned; duplicates are rejected.",
+        "[] eventAuthority - OPTIONAL, must be LAST if present: Fzo6R5MrDSComspzpQNiieGaYVpNksqeLC27CKTPMTm1. When supplied, SyncFillEvent is emitted via a self-CPI instead of sol_log_data. MakerFillEvent always uses sol_log_data."
+      ]
+    },
+    {
+      "name": "InitializeMakerRegistry",
+      "docs": [
+        "Create the market's MakerRegistry (2128 bytes, up to MAX_REGISTRY_MAKERS = 64).",
+        "",
+        "ARCHER_GLOBAL_AUTHORITY only, on any market; it also pays the rent.",
+        "Takes no instruction data."
+      ],
+      "accounts": [
+        {
+          "name": "adminAccount",
+          "isMut": true,
+          "isSigner": true,
+          "desc": "ARCHER_GLOBAL_AUTHORITY; pays the registry rent"
+        },
+        {
+          "name": "marketAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Market state account"
+        },
+        {
+          "name": "registryAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "MakerRegistry PDA: [\"maker_registry\", market]"
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "System program"
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 27
+      }
+    },
+    {
+      "name": "RegisterMaker",
+      "docs": [
+        "Register a maker book in the market's registry.",
+        "",
+        "ARCHER_GLOBAL_AUTHORITY only. Takes no instruction data. Fails if the registry is full (64) or the book is already registered."
+      ],
+      "accounts": [
+        {
+          "name": "adminAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "ARCHER_GLOBAL_AUTHORITY. Not the market admin."
+        },
+        {
+          "name": "marketAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Market state account"
+        },
+        {
+          "name": "makerBookAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "MakerBook PDA to register"
+        },
+        {
+          "name": "registryAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "MakerRegistry PDA"
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 28
+      }
+    },
+    {
+      "name": "DeregisterMaker",
+      "docs": [
+        "Deregister a maker book in the market's registry.",
+        "",
+        "ARCHER_GLOBAL_AUTHORITY only. Takes no instruction data. Fails if the book is not currently registered."
+      ],
+      "accounts": [
+        {
+          "name": "adminAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "ARCHER_GLOBAL_AUTHORITY. Not the market admin."
+        },
+        {
+          "name": "marketAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Market state account"
+        },
+        {
+          "name": "makerBookAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "MakerBook PDA to deregister"
+        },
+        {
+          "name": "registryAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "MakerRegistry PDA"
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 29
+      }
+    },
+    {
+      "name": "UpdateExpiryInSlots",
+      "docs": [
+        "Set the maximum staleness of a book's quotes, in slots.",
+        "",
+        "The aggregator skips a book once currentSlot - lastUpdatedSlot exceeds",
+        "expiryInSlots. 0 disables the check for this book."
+      ],
+      "accounts": [
+        {
+          "name": "authorityAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "Book maker or book delegate; for an ArcherAccount book, its owner or delegate"
+        },
+        {
+          "name": "makerBookAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "MakerBook PDA"
+        },
+        {
+          "name": "archerAccount",
+          "isMut": false,
+          "isSigner": false,
+          "isOptional": true,
+          "desc": "OPTIONAL. The book's ArcherAccount PDA, read to authorize the signer. REQUIRED iff makerBook.makerIsArcherAccount == 1; must be omitted otherwise."
+        }
+      ],
+      "args": [
+        {
+          "name": "updateExpiryInSlotsParams",
+          "type": {
+            "defined": "UpdateExpiryInSlotsParams"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 30
+      }
+    },
+    {
+      "name": "CloseMakerBook",
+      "docs": [
+        "Close a MakerBook PDA and refund its rent.",
+        "",
+        "Permissioned by the book's maker - the book delegate cannot close. The book must",
+        "be fully empty: baseLocked, quoteLocked, baseFree, quoteFree, totalBidBaseLots",
+        "and every bid/ask level all zero.",
+        "",
+        "A SUSPENDED BOOK CANNOT BE CLOSED (MakerBookSuspended, 523)",
+        "The rent lands on account 0, which is the wallet maker or the book's",
+        "ArcherAccount PDA. Takes no instruction data."
+      ],
+      "accounts": [
+        {
+          "name": "makerAccount",
+          "isMut": true,
+          "isSigner": true,
+          "desc": "Wallet maker, which signs; OR the book's ArcherAccount PDA, which cannot sign - in that case pass it with isSigner false and append authorityAccount as the trailing signer. Receives the rent refund."
+        },
+        {
+          "name": "marketAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Market state account; must equal makerBook.market"
+        },
+        {
+          "name": "makerBookAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "MakerBook PDA to close"
+        },
+        {
+          "name": "authorityAccount",
+          "isMut": false,
+          "isSigner": true,
+          "isOptional": true,
+          "desc": "OPTIONAL. ArcherAccount owner or delegate, signing on the PDA's behalf. REQUIRED iff the maker slot holds an ArcherAccount PDA (a program-owned account); must be omitted otherwise."
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 31
+      }
+    },
+    {
+      "name": "InitializeArcherAccount",
+      "docs": [
+        "Create an ArcherAccount - a user's delegated trading identity.",
+        "",
+        "PDA: [\"archer-account\", owner, platformSeed], where platformSeed is the",
+        "DelegatedPlatform's own seed string (\"self\" for SelfManaged, \"treadfi\" for",
+        "TreadFi) - NOT the numeric discriminant. One wallet may hold one account per",
+        "platform, each independently delegated.",
+        "",
+        "`platform` is the DelegatedPlatform discriminant. Empty instruction data",
+        "defaults to SelfManaged, but always send the byte explicitly."
+      ],
+      "accounts": [
+        {
+          "name": "ownerAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "Wallet the account belongs to"
+        },
+        {
+          "name": "payerAccount",
+          "isMut": true,
+          "isSigner": true,
+          "desc": "Pays the rent; may be the owner or a platform"
+        },
+        {
+          "name": "archerAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "ArcherAccount PDA (176 bytes)"
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "System program"
+        }
+      ],
+      "args": [
+        {
+          "name": "platform",
+          "type": "u8"
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 32
+      }
+    },
+    {
+      "name": "SetArcherAccountDelegate",
+      "docs": [
+        "Set or revoke an ArcherAccount's delegate, and its builder-fee ceiling.",
+        "",
+        "Owner only. maxBuilderFeePpm caps builderFeePpm on every taker swap funded by",
+        "this account; 0 forbids any builder fee.",
+        "",
+        "The delegate itself is read from account 2 - pass the default pubkey to revoke."
+      ],
+      "accounts": [
+        {
+          "name": "ownerAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "The ArcherAccount's owner"
+        },
+        {
+          "name": "archerAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "ArcherAccount PDA"
+        },
+        {
+          "name": "delegateAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "New delegate, or Pubkey::default() to revoke"
+        }
+      ],
+      "args": [
+        {
+          "name": "setArcherAccountDelegateParams",
+          "type": {
+            "defined": "SetArcherAccountDelegateParams"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 33
+      }
+    },
+    {
+      "name": "ArcherAccountWithdraw",
+      "docs": [
+        "Move value out of an ArcherAccount. Owner only - a delegate can never withdraw.",
+        "",
+        "Two independent legs, either or both:",
+        "  - token leg: tokenAmount > 0 moves atoms out of a token account owned by the",
+        "    ArcherAccount, signed by the account PDA. All four token-leg accounts must be",
+        "    supplied together or all omitted; supplying only some is rejected.",
+        "  - lamport leg: lamports > 0 moves lamports to the owner, bounded below by the",
+        "    account's rent-exempt minimum."
+      ],
+      "accounts": [
+        {
+          "name": "ownerAccount",
+          "isMut": true,
+          "isSigner": true,
+          "desc": "The ArcherAccount's owner; receives withdrawn SOL"
+        },
+        {
+          "name": "archerAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "ArcherAccount PDA"
+        },
+        {
+          "name": "tokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "isOptional": true,
+          "desc": "OPTIONAL (token leg). SPL Token or Token-2022"
+        },
+        {
+          "name": "mint",
+          "isMut": false,
+          "isSigner": false,
+          "isOptional": true,
+          "desc": "OPTIONAL (token leg). Mint being withdrawn"
+        },
+        {
+          "name": "sourceTokenAccount",
+          "isMut": true,
+          "isSigner": false,
+          "isOptional": true,
+          "desc": "OPTIONAL (token leg). Must be owned by the ArcherAccount"
+        },
+        {
+          "name": "destinationTokenAccount",
+          "isMut": true,
+          "isSigner": false,
+          "isOptional": true,
+          "desc": "OPTIONAL (token leg). Must be owned by ownerAccount"
+        }
+      ],
+      "args": [
+        {
+          "name": "archerAccountWithdrawParams",
+          "type": {
+            "defined": "ArcherAccountWithdrawParams"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 34
+      }
+    },
+    {
+      "name": "SwapFromArcherAccount",
+      "docs": [
+        "A taker swap funded from an ArcherAccount's own token accounts.",
+        "",
+        "The non-custodial market order: the taker is the ArcherAccount PDA, its owner or",
+        "delegate signs, and the program signs the token movement on the account's behalf",
+        "- so a delegate never gains authority over the user's wallet. Proceeds land back",
+        "in the account's token accounts.",
+        "",
+        "builderFeePpm is additionally capped by the account's own maxBuilderFeePpm.",
+        "",
+        "The ArcherAccount does not need a MakerBook on the market being traded; the maker",
+        "books in the tail are the counterparties, as in Swap.",
+        "",
+        "This is Swap's layout with two accounts at the front instead of one: the",
+        "authority cannot be a trailing account the way it is on every other",
+        "ArcherAccount instruction, because Swap's tail is a variable-length maker-book",
+        "list that would swallow it.",
+        "",
+        "REMAINING ACCOUNTS - not expressible positionally in this IDL. Append them to",
+        "`keys` after the fixed accounts, in this order:",
+        "  [writable] makerBookAccounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (64) MakerBook PDAs to match against. At least one is required; each must be writable and program-owned; duplicates are rejected.",
+        "  [] eventAuthority - OPTIONAL, must be LAST if present: Fzo6R5MrDSComspzpQNiieGaYVpNksqeLC27CKTPMTm1. When supplied, SyncFillEvent is emitted via a self-CPI instead of sol_log_data. MakerFillEvent always uses sol_log_data.",
+        "",
+        "BACKWARD COMPAT: legacy callers may still pass the instructions sysvar between",
+        "quoteTokenProgram and the first maker book; the program detects and skips it.",
+        "New callers must omit it."
+      ],
+      "accounts": [
+        {
+          "name": "authorityAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "The ArcherAccount's owner or delegate"
+        },
+        {
+          "name": "archerAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "ArcherAccount PDA; the taker"
+        },
+        {
+          "name": "marketAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market state account; must be Active"
+        },
+        {
+          "name": "builderFeeWallet",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Quote token account receiving the builder fee. Required and writable even when builderFeePpm is 0."
+        },
+        {
+          "name": "baseMint",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Base token mint"
+        },
+        {
+          "name": "quoteMint",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Quote token mint"
+        },
+        {
+          "name": "baseVaultAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market's base token vault PDA; written by settlement"
+        },
+        {
+          "name": "quoteVaultAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Market's quote token vault PDA; written by settlement"
+        },
+        {
+          "name": "takerBaseTokenAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Base token account owned by the ArcherAccount"
+        },
+        {
+          "name": "takerQuoteTokenAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "Quote token account owned by the ArcherAccount"
+        },
+        {
+          "name": "baseTokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Base token program"
+        },
+        {
+          "name": "quoteTokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Quote token program"
+        }
+      ],
+      "args": [
+        {
+          "name": "swapParams",
+          "type": {
+            "defined": "SwapParams"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 35
+      },
+      "remainingAccounts": [
+        "[writable] makerBookAccounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (64) MakerBook PDAs to match against. At least one is required; each must be writable and program-owned; duplicates are rejected.",
+        "[] eventAuthority - OPTIONAL, must be LAST if present: Fzo6R5MrDSComspzpQNiieGaYVpNksqeLC27CKTPMTm1. When supplied, SyncFillEvent is emitted via a self-CPI instead of sol_log_data. MakerFillEvent always uses sol_log_data."
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "MarketStateHeader",
+      "docs": [
+        "Market state account. Fixed 272 bytes, no trailing dynamic data.",
+        "PDA: [\"market\", marketId]"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "discriminator",
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            },
+            "docs": [
+              "b\"ACHRMKT1\""
+            ]
+          },
+          {
+            "name": "marketId",
+            "type": "publicKey",
+            "docs": [
+              "Unique market identifier; the second PDA seed"
+            ]
+          },
+          {
+            "name": "baseMint",
+            "type": "publicKey"
+          },
+          {
+            "name": "quoteMint",
+            "type": "publicKey"
+          },
+          {
+            "name": "baseVault",
+            "type": "publicKey",
+            "docs": [
+              "ATA of the market PDA for baseMint"
+            ]
+          },
+          {
+            "name": "quoteVault",
+            "type": "publicKey",
+            "docs": [
+              "ATA of the market PDA for quoteMint"
+            ]
+          },
+          {
+            "name": "admin",
+            "type": "publicKey",
+            "docs": [
+              "Revenue seat: collects the 80% fee share. No control over fees, status or the registry."
+            ]
+          },
+          {
+            "name": "baseAtomsPerBaseLot",
+            "type": "u64"
+          },
+          {
+            "name": "quoteAtomsPerQuoteLot",
+            "type": "u64"
+          },
+          {
+            "name": "tickSizeInQuoteAtomsPerBaseUnit",
+            "type": "u64"
+          },
+          {
+            "name": "rawBaseUnitsPerBaseUnit",
+            "type": "u64",
+            "docs": [
+              "Base unit scaler for sub-unit pricing"
+            ]
+          },
+          {
+            "name": "uncollectedFeesQuoteLots",
+            "type": "u64"
+          },
+          {
+            "name": "collectedFeesQuoteLots",
+            "type": "u64"
+          },
+          {
+            "name": "makerFeePpm",
+            "type": "i32",
+            "docs": [
+              "Negative is a rebate"
+            ]
+          },
+          {
+            "name": "takerFeePpm",
+            "type": "i32",
+            "docs": [
+              "Always >= 0; the taker side may never be a rebate"
+            ]
+          },
+          {
+            "name": "baseDecimals",
+            "type": "u8"
+          },
+          {
+            "name": "quoteDecimals",
+            "type": "u8"
+          },
+          {
+            "name": "status",
+            "type": "u8",
+            "docs": [
+              "MarketStatus: 0 = Active, 1 = Paused, 2 = Closed"
+            ]
+          },
+          {
+            "name": "reservedPadding1",
+            "type": "u8",
+            "docs": [
+              "Reserved. Never read."
+            ]
+          },
+          {
+            "name": "marketBump",
+            "type": "u8"
+          },
+          {
+            "name": "reservedPadding2",
+            "type": {
+              "array": [
+                "u8",
+                11
+              ]
+            },
+            "docs": [
+              "Reserved. Never read."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "MakerBook",
+      "docs": [
+        "Per-maker micro order book. Fixed 776 bytes.",
+        "PDA: [\"maker\", market, maker]"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "discriminator",
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            },
+            "docs": [
+              "b\"ACHRMKR1\""
+            ]
+          },
+          {
+            "name": "maker",
+            "type": "publicKey",
+            "docs": [
+              "Owner of this book: a wallet, or an ArcherAccount PDA when makerIsArcherAccount == 1"
+            ]
+          },
+          {
+            "name": "market",
+            "type": "publicKey"
+          },
+          {
+            "name": "delegate",
+            "type": "publicKey",
+            "docs": [
+              "Quoting delegate; Pubkey::default() means none. Cannot deposit, withdraw or close."
+            ]
+          },
+          {
+            "name": "midPriceTicks",
+            "type": "u64",
+            "docs": [
+              "Reference price MM levels are offset from. Pinned to 0 for LO books."
+            ]
+          },
+          {
+            "name": "quoteDeltaPerTick",
+            "type": "u64",
+            "docs": [
+              "Internal cache"
+            ]
+          },
+          {
+            "name": "minMidPriceTicks",
+            "type": "u64",
+            "docs": [
+              "Internal cache"
+            ]
+          },
+          {
+            "name": "quoteLocked",
+            "type": "u64",
+            "docs": [
+              "Quote lots locked by resting bids. Accurate as of midAtLastSync - see that field."
+            ]
+          },
+          {
+            "name": "quoteFree",
+            "type": "u64",
+            "docs": [
+              "Quote lots available for new bids or withdrawal. Accurate as of midAtLastSync."
+            ]
+          },
+          {
+            "name": "baseLocked",
+            "type": "u64",
+            "docs": [
+              "Base lots locked by resting asks"
+            ]
+          },
+          {
+            "name": "baseFree",
+            "type": "u64",
+            "docs": [
+              "Base lots available for new asks or withdrawal"
+            ]
+          },
+          {
+            "name": "status",
+            "type": "u8",
+            "docs": [
+              "MakerBookStatus: 1 = Active, 2 = Suspended. 0 is never valid.",
+              "A Suspended book is skipped by the matching engine and cannot be closed."
+            ]
+          },
+          {
+            "name": "makerBookBump",
+            "type": "u8"
+          },
+          {
+            "name": "reservedPadding1",
+            "type": "u16",
+            "docs": [
+              "Reserved. Held sync_spread_ticks on pre-v2 books; cleared on first quote update."
+            ]
+          },
+          {
+            "name": "kind",
+            "type": "u8",
+            "docs": [
+              "MAKER_KIND_MM (0) or MAKER_KIND_LO (1). Init-only and immutable."
+            ]
+          },
+          {
+            "name": "makerIsArcherAccount",
+            "type": "u8",
+            "docs": [
+              "1 when `maker` is an ArcherAccount PDA, 0 when it is a wallet. Init-only.",
+              "Decides whether the trailing authority/archerAccount slot is required on",
+              "every book-mutating instruction."
+            ]
+          },
+          {
+            "name": "reservedPadding2",
+            "type": {
+              "array": [
+                "u8",
+                2
+              ]
+            },
+            "docs": [
+              "Reserved. Never read."
+            ]
+          },
+          {
+            "name": "lastUpdatedSequenceNumber",
+            "type": "u64",
+            "docs": [
+              "Strictly increasing; each update may advance it by at most MAX_SEQUENCE_JUMP"
+            ]
+          },
+          {
+            "name": "totalBidBaseLots",
+            "type": "u64"
+          },
+          {
+            "name": "tickConversionNum",
+            "type": "u64",
+            "docs": [
+              "Internal cache"
+            ]
+          },
+          {
+            "name": "tickConversionDen",
+            "type": "u64",
+            "docs": [
+              "Internal cache"
+            ]
+          },
+          {
+            "name": "bidLevels",
+            "type": {
+              "array": [
+                {
+                  "defined": "MakerLevel"
+                },
+                16
+              ]
+            }
+          },
+          {
+            "name": "askLevels",
+            "type": {
+              "array": [
+                {
+                  "defined": "MakerLevel"
+                },
+                16
+              ]
+            }
+          },
+          {
+            "name": "lastUpdatedSlot",
+            "type": "u64",
+            "docs": [
+              "Slot of the last updateBook / updateMidPrice"
+            ]
+          },
+          {
+            "name": "expiryInSlots",
+            "type": "u64",
+            "docs": [
+              "Max staleness before the aggregator skips this book. 0 disables."
+            ]
+          },
+          {
+            "name": "midAtLastSync",
+            "type": "u64",
+            "docs": [
+              "Deferred-rebalancing anchor: the midPriceTicks at which quoteLocked /",
+              "quoteFree were last accurate. updateMidPrice defers the quote rebalance, so a",
+              "reader must replay the pending shift before trusting those two fields.",
+              "0 is a sentinel meaning 'already accurate at the current mid'."
+            ]
+          },
+          {
+            "name": "reservedPadding3",
+            "type": {
+              "array": [
+                "u64",
+                5
+              ]
+            },
+            "docs": [
+              "Reserved. Never read."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "MakerRegistry",
+      "docs": [
+        "Registry of the maker books belonging to a market. Fixed 2128 bytes.",
+        "PDA: [\"maker_registry\", market]"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "discriminator",
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            },
+            "docs": [
+              "b\"ACHRREG1\""
+            ]
+          },
+          {
+            "name": "market",
+            "type": "publicKey"
+          },
+          {
+            "name": "admin",
+            "type": "publicKey",
+            "docs": [
+              "Copied from the market admin at creation"
+            ]
+          },
+          {
+            "name": "numMakers",
+            "type": "u8",
+            "docs": [
+              "Live entries in `makers`"
+            ]
+          },
+          {
+            "name": "reservedPadding1",
+            "type": {
+              "array": [
+                "u8",
+                7
+              ]
+            },
+            "docs": [
+              "Reserved. Never read."
+            ]
+          },
+          {
+            "name": "makers",
+            "type": {
+              "array": [
+                "publicKey",
+                64
+              ]
+            },
+            "docs": [
+              "Registered MakerBook pubkeys; only the first numMakers are meaningful"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "ArcherAccount",
+      "docs": [
+        "A user's delegated trading identity. Fixed 176 bytes.",
+        "PDA: [\"archer-account\", owner, DelegatedPlatform::seed()]"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "discriminator",
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            },
+            "docs": [
+              "b\"ACHRACC1\""
+            ]
+          },
+          {
+            "name": "owner",
+            "type": "publicKey",
+            "docs": [
+              "The wallet this account belongs to. The only key that can move value out."
+            ]
+          },
+          {
+            "name": "delegate",
+            "type": "publicKey",
+            "docs": [
+              "Authorized delegate; Pubkey::default() means none"
+            ]
+          },
+          {
+            "name": "maxBuilderFeePpm",
+            "type": "u32",
+            "docs": [
+              "Owner-set ceiling on builderFeePpm for taker swaps funded by this account. 0 forbids any builder fee."
+            ]
+          },
+          {
+            "name": "platform",
+            "type": "u8",
+            "docs": [
+              "DelegatedPlatform discriminant. Its seed() string - not this byte - is the third PDA seed."
+            ]
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "reservedPadding1",
+            "type": "u16",
+            "docs": [
+              "Reserved. Never read."
+            ]
+          },
+          {
+            "name": "reservedPadding2",
+            "type": {
+              "array": [
+                "u64",
+                12
+              ]
+            },
+            "docs": [
+              "Reserved. Zeroed at initialization."
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "types": [
+    {
+      "name": "InitializeMarketParams",
+      "docs": [
+        "Borsh args for InitializeMarket, 202 bytes. FIELD ORDER MATTERS: each token",
+        "program pubkey follows its own mint, so the five pubkeys are not grouped as",
+        "(mints, programs)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "marketId",
+            "type": "publicKey",
+            "docs": [
+              "Must be non-default; seeds the market PDA"
+            ]
+          },
+          {
+            "name": "baseMint",
+            "type": "publicKey"
+          },
+          {
+            "name": "baseTokenProgram",
+            "type": "publicKey"
+          },
+          {
+            "name": "quoteMint",
+            "type": "publicKey"
+          },
+          {
+            "name": "quoteTokenProgram",
+            "type": "publicKey"
+          },
+          {
+            "name": "baseAtomsPerBaseLot",
+            "type": "u64"
+          },
+          {
+            "name": "quoteAtomsPerQuoteLot",
+            "type": "u64"
+          },
+          {
+            "name": "tickSizeInQuoteAtomsPerBaseUnit",
+            "type": "u64"
+          },
+          {
+            "name": "rawBaseUnitsPerBaseUnit",
+            "type": "u64"
+          },
+          {
+            "name": "baseDecimals",
+            "type": "u8",
+            "docs": [
+              "Must match the on-chain mint"
+            ]
+          },
+          {
+            "name": "quoteDecimals",
+            "type": "u8",
+            "docs": [
+              "Must match the on-chain mint"
+            ]
+          },
+          {
+            "name": "makerFeePpm",
+            "type": "i32",
+            "docs": [
+              "Must equal PERMISSIONLESS_MAKER_FEE_PPM unless the admin is ARCHER_GLOBAL_AUTHORITY"
+            ]
+          },
+          {
+            "name": "takerFeePpm",
+            "type": "i32",
+            "docs": [
+              "Must equal PERMISSIONLESS_TAKER_FEE_PPM unless the admin is ARCHER_GLOBAL_AUTHORITY.",
+              "Must be >= 0 in every case: the taker side may never be a rebate."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "ChangeMarketStatusParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "newStatus",
+            "type": "u8",
+            "docs": [
+              "MarketStatus: 0 = Active, 1 = Paused, 2 = Closed"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "UpdateMakerFeeParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "makerFeePpm",
+            "type": "i32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UpdateTakerFeeParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "takerFeePpm",
+            "type": "i32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CollectProtocolFeeParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "amount",
+            "type": "u64",
+            "docs": [
+              "Quote atoms to collect; 0 is a no-op"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "SwapParams",
+      "docs": [
+        "Borsh args for Swap and SwapFromArcherAccount, 22 bytes. The program also",
+        "accepts an 18-byte payload that stops after `mode`, for callers built before",
+        "builderFeePpm existed; it is read as a 0 fee. New clients should always send 22."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "amount",
+            "type": "u64",
+            "docs": [
+              "Lots. MaxAmountIn: max input to spend - u64::MAX means 'the taker's entire",
+              "input token balance'. MinAmountOut: min output to receive."
+            ]
+          },
+          {
+            "name": "threshold",
+            "type": "u64",
+            "docs": [
+              "Lots. MaxAmountIn: min acceptable output. MinAmountOut: max acceptable input.",
+              "Must be non-zero in MinAmountOut mode."
+            ]
+          },
+          {
+            "name": "side",
+            "type": "u8",
+            "docs": [
+              "Side: 0 = Bid (buy base), 1 = Ask (sell base)"
+            ]
+          },
+          {
+            "name": "mode",
+            "type": "u8",
+            "docs": [
+              "SwapMode: 0 = MaxAmountIn, 1 = MinAmountOut"
+            ]
+          },
+          {
+            "name": "builderFeePpm",
+            "type": "u32",
+            "docs": [
+              "Builder (frontend) fee in ppm of the quote notional traded, paid by the taker",
+              "on top of the protocol fee and routed to builderFeeWallet. 0 disables it.",
+              "Capped at MAX_BUILDER_FEE_PPM (10000), and on SwapFromArcherAccount also by",
+              "the account's maxBuilderFeePpm."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "MakerDepositFundsParams",
+      "docs": [
+        "Both 0 is a no-op."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "baseLots",
+            "type": "u64"
+          },
+          {
+            "name": "quoteLots",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MakerWithdrawFundsParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "baseLots",
+            "type": "u64"
+          },
+          {
+            "name": "quoteLots",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UpdateExpiryInSlotsParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "expiryInSlots",
+            "type": "u64",
+            "docs": [
+              "0 disables the expiry check for this book"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "SetArcherAccountDelegateParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "maxBuilderFeePpm",
+            "type": "u32",
+            "docs": [
+              "0 forbids any builder fee"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "ArcherAccountWithdrawParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "tokenAmount",
+            "type": "u64",
+            "docs": [
+              "Atoms out of the account's token account. 0 skips the token leg."
+            ]
+          },
+          {
+            "name": "lamports",
+            "type": "u64",
+            "docs": [
+              "Lamports to the owner. Bounded below by the rent-exempt minimum."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "UpdateBookData",
+      "docs": [
+        "Raw (non-borsh) payload of UpdateBook. The Rust struct additionally carries a",
+        "leading `discriminator: u8` at offset 0, which is exactly the instruction",
+        "discriminator byte (7). Encoding u8(7) || this struct reproduces the 536-byte",
+        "on-chain layout byte for byte, so the discriminator is deliberately omitted here."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "sequenceNumber",
+            "type": "u64",
+            "docs": [
+              "Must exceed makerBook.lastUpdatedSequenceNumber by 1..=MAX_SEQUENCE_JUMP"
+            ]
+          },
+          {
+            "name": "midPriceTicks",
+            "type": "u64",
+            "docs": [
+              "Must be 0 for LO books"
+            ]
+          },
+          {
+            "name": "numBids",
+            "type": "u8",
+            "docs": [
+              "Live entries in levels[0..16]; <= MAX_LEVELS"
+            ]
+          },
+          {
+            "name": "numAsks",
+            "type": "u8",
+            "docs": [
+              "Live entries in levels[16..32]; <= MAX_LEVELS"
+            ]
+          },
+          {
+            "name": "padding",
+            "type": {
+              "array": [
+                "u8",
+                5
+              ]
+            }
+          },
+          {
+            "name": "levels",
+            "type": {
+              "array": [
+                {
+                  "defined": "MakerLevel"
+                },
+                32
+              ]
+            },
+            "docs": [
+              "Fixed two-region array: [0..16] bids, [16..32] asks. Unused slots must be zero."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "MakerLevel",
+      "docs": [
+        "One resting price level. 16 bytes."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "sizeInBaseLots",
+            "type": "u64",
+            "docs": [
+              "0 means the level is inactive"
+            ]
+          },
+          {
+            "name": "priceOffsetTicks",
+            "type": "i64",
+            "docs": [
+              "MM book: signed offset from midPriceTicks; absolute price = mid + offset.",
+              "LO book: the absolute price tick itself, since mid is pinned to 0."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "MarketStatus",
+      "docs": [
+        "On-chain u8: Active = 0, Paused = 1, Closed = 2."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Active"
+          },
+          {
+            "name": "Paused"
+          },
+          {
+            "name": "Closed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Side",
+      "docs": [
+        "On-chain u8: Bid = 0, Ask = 1."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Bid"
+          },
+          {
+            "name": "Ask"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SwapMode",
+      "docs": [
+        "On-chain u8: MaxAmountIn = 0, MinAmountOut = 1."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "MaxAmountIn"
+          },
+          {
+            "name": "MinAmountOut"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MakerBookStatus",
+      "docs": [
+        "On-chain u8: Active = 1, Suspended = 2. The Rust enum has no 0 variant and",
+        "rejects a 0 byte; `Uninitialized` is listed only so generated clients assign",
+        "the correct numeric values to Active and Suspended."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Uninitialized"
+          },
+          {
+            "name": "Active"
+          },
+          {
+            "name": "Suspended"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DelegatedPlatform",
+      "docs": [
+        "On-chain u8: SelfManaged = 0, TreadFi = 1.",
+        "The PDA seed is the variant's own string (\"self\", \"treadfi\"), NOT this byte."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "SelfManaged"
+          },
+          {
+            "name": "TreadFi"
+          }
+        ]
+      }
+    }
+  ],
+  "events": [
+    {
+      "name": "SyncFillEvent",
+      "docs": [
+        "One per successful Swap / SwapFromArcherAccount.",
+        "Emitted via self-CPI when an event authority is passed, else via sol_log_data."
+      ],
+      "discriminator": "event:SyncFillEvent",
+      "discriminatorBytes": [
+        59,
+        204,
+        114,
+        143,
+        34,
+        225,
+        40,
+        189
+      ],
+      "fields": [
+        {
+          "name": "userWallet",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "market",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "side",
+          "type": "u8",
+          "index": false
+        },
+        {
+          "name": "inputMint",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "outputMint",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "paramAmount",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "paramThreshold",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "execInputSize",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "execOutputSize",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "builderFeeWallet",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "builderFeeAtoms",
+          "type": "u64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "MakerFillEvent",
+      "docs": [
+        "One per maker level touched by a fill. ALWAYS emitted via sol_log_data, never",
+        "self-CPI, because it can fire hundreds of times in a single swap.",
+        "makerIndex is the book's position in the supplied maker-book list."
+      ],
+      "discriminator": "event:MakerFillEvent",
+      "discriminatorBytes": [
+        60,
+        14,
+        66,
+        1,
+        204,
+        202,
+        42,
+        161
+      ],
+      "fields": [
+        {
+          "name": "makerIndex",
+          "type": "u8",
+          "index": false
+        },
+        {
+          "name": "side",
+          "type": "u8",
+          "index": false
+        },
+        {
+          "name": "absolutePriceTicks",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "priceOffsetTicks",
+          "type": "i64",
+          "index": false
+        },
+        {
+          "name": "baseLotsFilled",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "quoteLotsFilled",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "makerFee",
+          "type": "i64",
+          "index": false
+        },
+        {
+          "name": "sequenceNumber",
+          "type": "u64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "LimitOrderPlacedEvent",
+      "docs": [
+        "LO books only. sol_log_data, when UpdateBook adds a level."
+      ],
+      "discriminator": "event:LimitOrderPlacedEvent",
+      "discriminatorBytes": [
+        102,
+        100,
+        70,
+        242,
+        177,
+        143,
+        91,
+        181
+      ],
+      "fields": [
+        {
+          "name": "side",
+          "type": "u8",
+          "index": false
+        },
+        {
+          "name": "absolutePriceTicks",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "priceOffsetTicks",
+          "type": "i64",
+          "index": false
+        },
+        {
+          "name": "sizeLots",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "sequenceNumber",
+          "type": "u64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "LimitOrderCanceledEvent",
+      "docs": [
+        "LO books only. sol_log_data, when UpdateBook or ClearBook removes a level."
+      ],
+      "discriminator": "event:LimitOrderCanceledEvent",
+      "discriminatorBytes": [
+        38,
+        110,
+        113,
+        150,
+        123,
+        237,
+        121,
+        105
+      ],
+      "fields": [
+        {
+          "name": "side",
+          "type": "u8",
+          "index": false
+        },
+        {
+          "name": "absolutePriceTicks",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "priceOffsetTicks",
+          "type": "i64",
+          "index": false
+        },
+        {
+          "name": "prevSizeLots",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "sequenceNumber",
+          "type": "u64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "LimitOrderResizedEvent",
+      "docs": [
+        "LO books only. sol_log_data, when UpdateBook changes a level's size."
+      ],
+      "discriminator": "event:LimitOrderResizedEvent",
+      "discriminatorBytes": [
+        133,
+        247,
+        99,
+        188,
+        194,
+        35,
+        12,
+        234
+      ],
+      "fields": [
+        {
+          "name": "side",
+          "type": "u8",
+          "index": false
+        },
+        {
+          "name": "absolutePriceTicks",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "priceOffsetTicks",
+          "type": "i64",
+          "index": false
+        },
+        {
+          "name": "prevSizeLots",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "newSizeLots",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "sequenceNumber",
+          "type": "u64",
+          "index": false
+        }
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 0,
+      "name": "InvalidArcherTreasury",
+      "msg": "Invalid Archer treasury"
+    },
+    {
+      "code": 100,
+      "name": "InvalidParams",
+      "msg": "Invalid market parameters"
+    },
+    {
+      "code": 101,
+      "name": "MarketAlreadyInitialized",
+      "msg": "Market is already initialized"
+    },
+    {
+      "code": 102,
+      "name": "InvalidLotSize",
+      "msg": "Invalid lot size"
+    },
+    {
+      "code": 103,
+      "name": "InvalidTickSize",
+      "msg": "Invalid tick size"
+    },
+    {
+      "code": 107,
+      "name": "MarketNotActive",
+      "msg": "Market is not active"
+    },
+    {
+      "code": 108,
+      "name": "InvalidStatusTransition",
+      "msg": "Invalid status transition"
+    },
+    {
+      "code": 109,
+      "name": "MarketNotPaused",
+      "msg": "Market is not paused"
+    },
+    {
+      "code": 200,
+      "name": "InvalidAccount",
+      "msg": "Invalid account"
+    },
+    {
+      "code": 201,
+      "name": "AccountNotWritable",
+      "msg": "Account is not writable"
+    },
+    {
+      "code": 202,
+      "name": "AccountNotSigner",
+      "msg": "Account is not a signer"
+    },
+    {
+      "code": 203,
+      "name": "InvalidPda",
+      "msg": "Invalid PDA derivation"
+    },
+    {
+      "code": 204,
+      "name": "AccountSizeMismatch",
+      "msg": "Account data size mismatch"
+    },
+    {
+      "code": 205,
+      "name": "InvalidAdmin",
+      "msg": "Invalid admin pubkey"
+    },
+    {
+      "code": 206,
+      "name": "Unauthorized",
+      "msg": "Unauthorized"
+    },
+    {
+      "code": 207,
+      "name": "InvalidMarketId",
+      "msg": "Invalid market ID"
+    },
+    {
+      "code": 208,
+      "name": "WrongOwner",
+      "msg": "Account has wrong owner"
+    },
+    {
+      "code": 209,
+      "name": "AccountNotExecutable",
+      "msg": "Account must be executable"
+    },
+    {
+      "code": 210,
+      "name": "InvalidDiscriminator",
+      "msg": "Invalid account discriminator"
+    },
+    {
+      "code": 211,
+      "name": "AccountNotInitialized",
+      "msg": "Account is not initialized"
+    },
+    {
+      "code": 212,
+      "name": "AccountAlreadyInitialized",
+      "msg": "Account is already initialized"
+    },
+    {
+      "code": 300,
+      "name": "InvalidMint",
+      "msg": "Invalid mint account"
+    },
+    {
+      "code": 301,
+      "name": "InvalidVault",
+      "msg": "Invalid vault account"
+    },
+    {
+      "code": 302,
+      "name": "InvalidVaultAddress",
+      "msg": "Invalid vault address"
+    },
+    {
+      "code": 303,
+      "name": "InvalidTokenAccount",
+      "msg": "Invalid token account"
+    },
+    {
+      "code": 304,
+      "name": "InvalidTokenProgram",
+      "msg": "Invalid token program"
+    },
+    {
+      "code": 305,
+      "name": "InvalidAssociatedTokenProgram",
+      "msg": "Invalid associated token program"
+    },
+    {
+      "code": 306,
+      "name": "InvalidSystemProgram",
+      "msg": "Invalid system program"
+    },
+    {
+      "code": 307,
+      "name": "InvalidRent",
+      "msg": "Invalid rent"
+    },
+    {
+      "code": 308,
+      "name": "UnsupportedMintExtension",
+      "msg": "Token-2022 mint carries an extension unsupported by Archer"
+    },
+    {
+      "code": 309,
+      "name": "MintDecimalsMismatch",
+      "msg": "Declared decimals do not match the mint's decimals"
+    },
+    {
+      "code": 400,
+      "name": "ArithmeticOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 401,
+      "name": "ArithmeticUnderflow",
+      "msg": "Arithmetic underflow"
+    },
+    {
+      "code": 402,
+      "name": "InsufficientBalance",
+      "msg": "Insufficient balance"
+    },
+    {
+      "code": 500,
+      "name": "InvalidMakerBook",
+      "msg": "Invalid maker book"
+    },
+    {
+      "code": 501,
+      "name": "MakerBookFrozen",
+      "msg": "Maker book cannot be updated"
+    },
+    {
+      "code": 502,
+      "name": "UnauthorizedMaker",
+      "msg": "Unauthorized market maker"
+    },
+    {
+      "code": 503,
+      "name": "InvalidPrice",
+      "msg": "Invalid price"
+    },
+    {
+      "code": 504,
+      "name": "InvalidOrderSequence",
+      "msg": "Invalid order sequence"
+    },
+    {
+      "code": 505,
+      "name": "CrossingOrderLevels",
+      "msg": "Crossing order book levels"
+    },
+    {
+      "code": 506,
+      "name": "InvalidSizeAtLevel",
+      "msg": "Invalid size at level"
+    },
+    {
+      "code": 507,
+      "name": "NoMatchingLiquidity",
+      "msg": "No liquidity levels found"
+    },
+    {
+      "code": 508,
+      "name": "TooManyMakerBooks",
+      "msg": "Too many maker books per swap"
+    },
+    {
+      "code": 509,
+      "name": "StaleSequenceNumber",
+      "msg": "Stale sequence number"
+    },
+    {
+      "code": 510,
+      "name": "MakerRegistryFull",
+      "msg": "Maker registry is full"
+    },
+    {
+      "code": 511,
+      "name": "MakerAlreadyRegistered",
+      "msg": "Maker already registered in registry"
+    },
+    {
+      "code": 512,
+      "name": "MakerNotRegistered",
+      "msg": "Maker not registered in registry"
+    },
+    {
+      "code": 513,
+      "name": "IncompleteMakerBooks",
+      "msg": "Incomplete maker books: not all registered makers provided"
+    },
+    {
+      "code": 514,
+      "name": "InvalidMakerRegistry",
+      "msg": "Invalid maker registry"
+    },
+    {
+      "code": 515,
+      "name": "MakerBookHasLockedBalance",
+      "msg": "Maker book has locked balances; quotes must be cleared before closing"
+    },
+    {
+      "code": 516,
+      "name": "MakerBookHasFreeBalance",
+      "msg": "Maker book has free balances; funds must be withdrawn before closing"
+    },
+    {
+      "code": 517,
+      "name": "MakerBookHasActiveLevels",
+      "msg": "Maker book has active levels; book must be cleared before closing"
+    },
+    {
+      "code": 518,
+      "name": "InvalidMakerKind",
+      "msg": "Invalid maker book kind (must be 0 = MM or 1 = LO)"
+    },
+    {
+      "code": 519,
+      "name": "MidPriceImmutableForLimitOrderBook",
+      "msg": "Mid price is immutable for a limit-order (LO) maker book; must stay 0"
+    },
+    {
+      "code": 521,
+      "name": "DuplicateMakerBook",
+      "msg": "Duplicate maker book account supplied"
+    },
+    {
+      "code": 522,
+      "name": "SequenceNumberTooFarAhead",
+      "msg": "Sequence number jumps too far ahead of the book's current one"
+    },
+    {
+      "code": 523,
+      "name": "MakerBookSuspended",
+      "msg": "Maker book is suspended; it cannot be closed"
+    },
+    {
+      "code": 600,
+      "name": "InvalidFee",
+      "msg": "Invalid maker fee"
+    },
+    {
+      "code": 601,
+      "name": "InvalidFeeRecipient",
+      "msg": "Invalid fee recipient"
+    },
+    {
+      "code": 602,
+      "name": "FeeOverflow",
+      "msg": "Fee overflow"
+    },
+    {
+      "code": 603,
+      "name": "InsufficientProtocolFees",
+      "msg": "Insufficient protocol fees to cover rebates"
+    },
+    {
+      "code": 606,
+      "name": "BuilderFeeTooHigh",
+      "msg": "Builder fee exceeds the maximum allowed"
+    },
+    {
+      "code": 607,
+      "name": "InvalidBuilderFeeWallet",
+      "msg": "Invalid builder fee wallet"
+    },
+    {
+      "code": 608,
+      "name": "InvalidPermissionlessFeeConfig",
+      "msg": "Permissionless markets must launch with the fixed protocol fee config"
+    },
+    {
+      "code": 609,
+      "name": "NegativeTakerFeeNotAllowed",
+      "msg": "Taker fee cannot be negative; only the maker fee may be a rebate"
+    },
+    {
+      "code": 700,
+      "name": "InvalidSwapSide",
+      "msg": "Invalid swap side"
+    },
+    {
+      "code": 701,
+      "name": "InvalidSwapMode",
+      "msg": "Invalid swap mode"
+    },
+    {
+      "code": 702,
+      "name": "ZeroSwapAmount",
+      "msg": "Swap amount cannot be zero"
+    },
+    {
+      "code": 703,
+      "name": "SlippageToleranceExceeded",
+      "msg": "Slippage tolerance exceeded"
+    },
+    {
+      "code": 704,
+      "name": "QuoteOverflow",
+      "msg": "Quote overflow"
+    },
+    {
+      "code": 705,
+      "name": "PriceOverflow",
+      "msg": "Price overflow"
+    },
+    {
+      "code": 900,
+      "name": "FillExceedsMakerAvailable",
+      "msg": "Fill quantity exceeds maker available liquidity"
+    },
+    {
+      "code": 901,
+      "name": "ZeroFill",
+      "msg": "Fill produced zero output"
+    },
+    {
+      "code": 902,
+      "name": "PricePriorityViolated",
+      "msg": "Price priority ordering violated across levels"
+    },
+    {
+      "code": 903,
+      "name": "DustExceedsLevel",
+      "msg": "Pro-rata distribution exceeds available at level"
+    },
+    {
+      "code": 904,
+      "name": "FeeSolvencyViolated",
+      "msg": "Fee solvency violated: net protocol revenue is negative"
+    },
+    {
+      "code": 905,
+      "name": "TokenConservationViolated",
+      "msg": "Token conservation violated: vault balance mismatch"
+    },
+    {
+      "code": 906,
+      "name": "ZeroOutput",
+      "msg": "Swap produced zero output atoms from nonzero lot trade"
+    },
+    {
+      "code": 1000,
+      "name": "InvalidArcherAccount",
+      "msg": "Invalid ArcherAccount"
+    },
+    {
+      "code": 1001,
+      "name": "UnauthorizedArcherAccountDelegate",
+      "msg": "Signer is neither the ArcherAccount's owner nor its delegate"
+    },
+    {
+      "code": 1002,
+      "name": "InvalidArcherAccountTokenAccount",
+      "msg": "Token account is not owned by the ArcherAccount"
+    },
+    {
+      "code": 1003,
+      "name": "BuilderFeeExceedsAccountCap",
+      "msg": "Builder fee exceeds the ArcherAccount's owner-set cap"
+    },
+    {
+      "code": 1004,
+      "name": "InsufficientArcherAccountLamports",
+      "msg": "Withdrawal would leave the ArcherAccount below rent exemption"
+    },
+    {
+      "code": 1005,
+      "name": "InvalidDelegatedPlatform",
+      "msg": "Unknown delegated platform"
+    }
+  ],
+  "seeds": {
+    "MarketStateHeader": [
+      {
+        "kind": "const",
+        "type": "string",
+        "value": "market"
+      },
+      {
+        "kind": "account",
+        "type": "publicKey",
+        "path": "market_id"
+      }
+    ],
+    "MakerBook": [
+      {
+        "kind": "const",
+        "type": "string",
+        "value": "maker"
+      },
+      {
+        "kind": "account",
+        "type": "publicKey",
+        "path": "market"
+      },
+      {
+        "kind": "account",
+        "type": "publicKey",
+        "path": "maker"
+      }
+    ],
+    "MakerRegistry": [
+      {
+        "kind": "const",
+        "type": "string",
+        "value": "maker_registry"
+      },
+      {
+        "kind": "account",
+        "type": "publicKey",
+        "path": "market"
+      }
+    ],
+    "ArcherAccount": [
+      {
+        "kind": "const",
+        "type": "string",
+        "value": "archer-account"
+      },
+      {
+        "kind": "account",
+        "type": "publicKey",
+        "path": "owner"
+      },
+      {
+        "kind": "const",
+        "type": "string",
+        "value": "<DelegatedPlatform::seed()>",
+        "docs": [
+          "Literal \"self\" for SelfManaged (0) or \"treadfi\" for TreadFi (1). Not the numeric discriminant."
+        ]
+      }
+    ]
+  },
+  "constants": [
+    {
+      "name": "ARCHER_EXCHANGE_TREASURY",
+      "type": "publicKey",
+      "value": "ELGWUVJD6NBNLyJ5Xv98PzoSg9Wh2Y8Bwep9JZgm9nuo"
+    },
+    {
+      "name": "ARCHER_GLOBAL_AUTHORITY",
+      "type": "publicKey",
+      "value": "AuthYRbdcyksthcB1AM8ZKB3CidzChURkLzsGN8pYUmw",
+      "docs": [
+        "Controls status, fees, book suspension and the registry on every market"
+      ]
+    },
+    {
+      "name": "EVENT_AUTHORITY_PUBKEY",
+      "type": "publicKey",
+      "value": "Fzo6R5MrDSComspzpQNiieGaYVpNksqeLC27CKTPMTm1",
+      "docs": [
+        "Optional trailing account enabling self-CPI event emission"
+      ]
+    },
+    {
+      "name": "EVENT_AUTHORITY_SEED",
+      "type": "string",
+      "value": "__event_authority"
+    },
+    {
+      "name": "EVENT_AUTHORITY_BUMP",
+      "type": "u8",
+      "value": "255"
+    },
+    {
+      "name": "EVENT_IX_TAG",
+      "type": "u8",
+      "value": "255",
+      "docs": [
+        "Leading byte of a self-CPI event instruction; the program verifies the event authority signed, then no-ops"
+      ]
+    },
+    {
+      "name": "ARCHER_PROTOCOL_FEE_PPM",
+      "type": "u64",
+      "value": "200000",
+      "docs": [
+        "Treasury's cut of collected protocol fees (20%)"
+      ]
+    },
+    {
+      "name": "PPM_DIVISOR",
+      "type": "u64",
+      "value": "1000000"
+    },
+    {
+      "name": "MIN_FEE_PPM",
+      "type": "i32",
+      "value": "-50000"
+    },
+    {
+      "name": "MAX_FEE_PPM",
+      "type": "i32",
+      "value": "100000"
+    },
+    {
+      "name": "PERMISSIONLESS_MAKER_FEE_PPM",
+      "type": "i32",
+      "value": "400",
+      "docs": [
+        "Fixed maker fee every non-global-authority market must use"
+      ]
+    },
+    {
+      "name": "PERMISSIONLESS_TAKER_FEE_PPM",
+      "type": "i32",
+      "value": "700",
+      "docs": [
+        "Fixed taker fee every non-global-authority market must use"
+      ]
+    },
+    {
+      "name": "MAX_BUILDER_FEE_PPM",
+      "type": "u32",
+      "value": "10000",
+      "docs": [
+        "Ceiling on SwapParams.builderFeePpm (1%)"
+      ]
+    },
+    {
+      "name": "MAX_LEVELS",
+      "type": "u32",
+      "value": "16",
+      "docs": [
+        "Bid levels and ask levels per maker book"
+      ]
+    },
+    {
+      "name": "MAX_SEQUENCE_JUMP",
+      "type": "u64",
+      "value": "65535",
+      "docs": [
+        "Largest allowed single advance of lastUpdatedSequenceNumber"
+      ]
+    },
+    {
+      "name": "MAX_MAKER_BOOKS_PER_AUCTION",
+      "type": "u32",
+      "value": "64",
+      "docs": [
+        "Maker books one Swap / SwapFromArcherAccount may match against"
+      ]
+    },
+    {
+      "name": "MAX_REGISTRY_MAKERS",
+      "type": "u32",
+      "value": "64"
+    },
+    {
+      "name": "MAKER_KIND_MM",
+      "type": "u8",
+      "value": "0",
+      "docs": [
+        "MakerBook.kind: market-maker book, levels offset from midPriceTicks"
+      ]
+    },
+    {
+      "name": "MAKER_KIND_LO",
+      "type": "u8",
+      "value": "1",
+      "docs": [
+        "MakerBook.kind: limit-order book, midPriceTicks pinned to 0"
+      ]
+    },
+    {
+      "name": "MARKET_STATE_DISCRIMINATOR",
+      "type": "string",
+      "value": "ACHRMKT1"
+    },
+    {
+      "name": "MAKER_BOOK_DISCRIMINATOR",
+      "type": "string",
+      "value": "ACHRMKR1"
+    },
+    {
+      "name": "MAKER_REGISTRY_DISCRIMINATOR",
+      "type": "string",
+      "value": "ACHRREG1"
+    },
+    {
+      "name": "ARCHER_ACCOUNT_DISCRIMINATOR",
+      "type": "string",
+      "value": "ACHRACC1"
+    },
+    {
+      "name": "MARKET_STATE_LEN",
+      "type": "u32",
+      "value": "272",
+      "docs": [
+        "Byte size of the market state account"
+      ]
+    },
+    {
+      "name": "MAKER_BOOK_LEN",
+      "type": "u32",
+      "value": "776",
+      "docs": [
+        "Byte size of a MakerBook account"
+      ]
+    },
+    {
+      "name": "MAKER_REGISTRY_LEN",
+      "type": "u32",
+      "value": "2128",
+      "docs": [
+        "Byte size of a MakerRegistry account"
+      ]
+    },
+    {
+      "name": "ARCHER_ACCOUNT_LEN",
+      "type": "u32",
+      "value": "176",
+      "docs": [
+        "Byte size of an ArcherAccount"
+      ]
+    },
+    {
+      "name": "UPDATE_BOOK_DATA_LEN",
+      "type": "u32",
+      "value": "536",
+      "docs": [
+        "Byte size of the UpdateBook instruction data, discriminator included"
+      ]
+    }
+  ]
+}
