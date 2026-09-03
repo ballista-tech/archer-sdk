@@ -54,8 +54,8 @@ pub fn create_transfer_admin_instruction(
     market: Pubkey,
     admin: Pubkey,
     new_admin: Pubkey,
-) -> Vec<Instruction> {
-    vec![Instruction {
+) -> Instruction {
+    Instruction {
         program_id: crate::ARCHER_V1_PROGRAM_ID,
         accounts: vec![
             AccountMeta::new(market, false),
@@ -63,7 +63,7 @@ pub fn create_transfer_admin_instruction(
             AccountMeta::new_readonly(new_admin, false),
         ],
         data: [ArcherInstruction::TransferAdmin.to_vec()].concat(),
-    }]
+    }
 }
 
 pub fn create_collect_protocol_fee_instruction(
@@ -120,8 +120,8 @@ pub fn create_update_maker_fee_instruction(
     params: UpdateMakerFeeParams,
     market: Pubkey,
     admin: Pubkey,
-) -> Vec<Instruction> {
-    vec![Instruction {
+) -> Instruction {
+    Instruction {
         program_id: crate::ARCHER_V1_PROGRAM_ID,
         accounts: vec![
             AccountMeta::new(market, false),
@@ -132,15 +132,15 @@ pub fn create_update_maker_fee_instruction(
             borsh::to_vec(&params).unwrap(),
         ]
         .concat(),
-    }]
+    }
 }
 
 pub fn create_update_taker_fee_instruction(
     params: UpdateTakerFeeParams,
     market: Pubkey,
     admin: Pubkey,
-) -> Vec<Instruction> {
-    vec![Instruction {
+) -> Instruction {
+    Instruction {
         program_id: crate::ARCHER_V1_PROGRAM_ID,
         accounts: vec![
             AccountMeta::new(market, false),
@@ -151,5 +151,5 @@ pub fn create_update_taker_fee_instruction(
             borsh::to_vec(&params).unwrap(),
         ]
         .concat(),
-    }]
+    }
 }
