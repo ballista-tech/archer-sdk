@@ -23,6 +23,48 @@ impl LimitOrderId {
     }
 }
 
+/// What `UpdateBookLimit` does when a placed or grown level would cross a
+/// registered maker's resting quote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum CrossPolicy {
+    /// Fail the instruction with `PostOnlyWouldCross` (524).
+    #[default]
+    Reject = 0,
+    /// Place the crossing level anyway. The registry set is still required.
+    Allow = 1,
+}
+
+/// The registry set every limit-order action carries: all limit-order writes
+/// are `UpdateBookLimit`, so the program enforces post-only against the
+/// market's registered makers at placement.
+///
+/// `registry_books` must be exactly the registry's maker books (any order);
+/// build it with [`PostOnly::from_registry`] from a freshly fetched
+/// [`MakerRegistry`](crate::onchain::MakerRegistry).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostOnly {
+    pub registry: Pubkey,
+    pub registry_books: Vec<Pubkey>,
+    pub cross_policy: CrossPolicy,
+}
+
+impl PostOnly {
+    /// The registry's current maker set, in registry order.
+    pub fn from_registry(
+        registry: Pubkey,
+        state: &crate::onchain::MakerRegistry,
+        cross_policy: CrossPolicy,
+    ) -> Self {
+        let n = (state.num_makers as usize).min(state.makers.len());
+        Self {
+            registry,
+            registry_books: state.makers[..n].to_vec(),
+            cross_policy,
+        }
+    }
+}
+
 /// A single limit order, in human-readable form.
 #[derive(Debug, Clone, Copy)]
 pub struct LimitOrder {

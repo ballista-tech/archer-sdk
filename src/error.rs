@@ -83,9 +83,6 @@ pub enum ArcherSDKError {
     #[error("crossed book offsets: best bid offset {bid_offset} >= best ask offset {ask_offset}")]
     CrossedBookOffsets { bid_offset: i64, ask_offset: i64 },
 
-    #[error("anchor mid price is zero — book never initialized with levels")]
-    AnchorMidUninitialized,
-
     #[error("no orders provided")]
     EmptyOrderList,
 

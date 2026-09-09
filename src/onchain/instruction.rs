@@ -325,6 +325,38 @@ pub enum ArcherInstruction {
     /// 12+. `[writable]` maker_book_accounts - MakerBooks to match against
     SwapFromArcherAccount = 35,
 
+    /// Replace the resting levels of a **limit-order (LO)** maker book with
+    /// on-chain post-only enforcement against the market's registered makers.
+    ///
+    /// Semantically `UpdateBook` plus a check that every level the payload places or grows
+    /// does not cross an *eligible* registered maker at placement: a bid must
+    /// sit strictly below the best registered ask, an ask strictly above the
+    /// best registered bid.
+    ///
+    /// Data:
+    /// ```text
+    /// [0]         discriminator = 36
+    /// [1]         cross_policy   0 = Reject (error 524 on a cross), 1 = Allow
+    /// [2..538)    UpdateBookData (536 bytes, as for UpdateBook; its byte 0 is
+    ///             ignored; mid_price_ticks must be 0)
+    /// ```
+    ///
+    /// Accounts
+    /// 0. `[signer]`    maker_account       - Book maker or delegate; for an ArcherAccount book,
+    ///                                        its owner or delegate
+    /// 1. `[writable]`  maker_book_account  - LO MakerBook PDA
+    /// 2. `[]`          market_account      - Must equal maker_book.market
+    /// 3. `[]`          maker_registry      - The market's MakerRegistry
+    /// 4. `[]` optional archer_account      - The book's ArcherAccount PDA.
+    ///                                        REQUIRED iff maker_book.maker_is_archer_account == 1;
+    ///                                        must be omitted otherwise.
+    /// Then, in order:
+    /// N..  `[]`        registry books      - Exactly maker_registry.num_makers MakerBook accounts,
+    ///                                        each registry entry once, in any order
+    ///                                        (error 525 otherwise). Required for both
+    ///                                        cross policies.
+    UpdateBookLimit = 36,
+
 }
 
 impl ArcherInstruction {

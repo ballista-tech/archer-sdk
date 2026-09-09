@@ -2,8 +2,9 @@
 //!
 //! [`LocalBook`] is the SDK's scratch representation of a user's intended state.
 //! It is **anchor-bound**: at construction it captures the anchor mid the book
-//! is operating under, and all subsequent mutations expect IDs whose absolute
-//! price ticks can be reduced to an offset under that anchor. Render-time
+//! is operating under (always 0 for LO books, whose offsets are absolute
+//! prices), and all subsequent mutations expect IDs whose absolute price ticks
+//! can be reduced to an offset under that anchor. Render-time
 //! ([`LocalBook::to_maker_levels`]) emits the sorted bid/ask arrays that go
 //! into a single `UpdateBook` instruction.
 
@@ -183,15 +184,10 @@ impl LocalBook {
 
     /// Compute the i64 offset of an ID under this book's anchor.
     ///
-    /// O(1) — one subtraction, two `try_from` checks. Surfaces
-    /// `OffsetOverflow` if the ID's absolute price is so far from the anchor
-    /// that the difference doesn't fit in `i64`. With the program's own
-    /// invariant `mid > 0` and `mid + offset > 0` for every active level,
-    /// this is only triggered by genuinely pathological inputs.
+    /// For LO books the anchor is 0, so the offset is simply the absolute
+    /// price tick. O(1). `OffsetOverflow` only for pathological inputs whose
+    /// difference does not fit in `i64`.
     fn offset_for(&self, id: LimitOrderId) -> SdkResult<i64> {
-        if self.anchor_mid_ticks == 0 {
-            return Err(ArcherSDKError::AnchorMidUninitialized);
-        }
         let price_i64 =
             i64::try_from(id.price_ticks).map_err(|_| ArcherSDKError::OffsetOverflow {
                 price: id.price_ticks as f64,

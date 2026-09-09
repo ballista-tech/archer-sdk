@@ -1445,6 +1445,76 @@
         "[writable] makerBookAccounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (64) MakerBook PDAs to match against. At least one is required; each must be writable and program-owned; duplicates are rejected.",
         "[] eventAuthority - OPTIONAL, must be LAST if present: Fzo6R5MrDSComspzpQNiieGaYVpNksqeLC27CKTPMTm1. When supplied, SyncFillEvent is emitted via a self-CPI instead of sol_log_data. MakerFillEvent always uses sol_log_data."
       ]
+    },
+    {
+      "name": "UpdateBookLimit",
+      "docs": [
+        "Replace the resting levels of a limit-order (LO) maker book with on-chain",
+        "post-only enforcement against the market's registered makers.",
+        "",
+        "Semantically UpdateBook plus a check that every level the payload places or grows does not",
+        "cross an eligible registered maker at placement: a bid must sit strictly below",
+        "the best registered ask, an ask strictly above the best registered bid.",
+        "",
+        "WIRE LAYOUT:",
+        "  [0]         discriminator = 36",
+        "  [1]         crossPolicy   u8: 0 = Reject (error 524 on a cross), 1 = Allow",
+        "  [2..538)    UpdateBookData (536 bytes, as for UpdateBook; its byte 0 is",
+        "              ignored; midPriceTicks must be 0)",
+        "",
+        "After the fixed accounts (and the optional archerAccount), exactly",
+        "makerRegistry.numMakers MakerBook accounts follow, each registry entry once, in any order; error",
+        "525 otherwise. They are required for both cross policies."
+      ],
+      "accounts": [
+        {
+          "name": "makerAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "Book maker or book delegate; for an ArcherAccount book, its owner or delegate"
+        },
+        {
+          "name": "makerBookAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "LO MakerBook PDA (kind == 1); error 526 otherwise"
+        },
+        {
+          "name": "marketAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Market state account; must equal makerBook.market"
+        },
+        {
+          "name": "makerRegistry",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "The market's MakerRegistry PDA; must reference this market"
+        },
+        {
+          "name": "archerAccount",
+          "isMut": false,
+          "isSigner": false,
+          "isOptional": true,
+          "desc": "OPTIONAL. The book's ArcherAccount PDA, read to authorize the signer. REQUIRED iff makerBook.makerIsArcherAccount == 1; must be omitted otherwise. The registry books follow it."
+        }
+      ],
+      "args": [
+        {
+          "name": "crossPolicy",
+          "type": "u8"
+        },
+        {
+          "name": "updateBookData",
+          "type": {
+            "defined": "UpdateBookData"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 36
+      }
     }
   ],
   "accounts": [
@@ -2972,6 +3042,21 @@
       "code": 523,
       "name": "MakerBookSuspended",
       "msg": "Maker book is suspended; it cannot be closed"
+    },
+    {
+      "code": 524,
+      "name": "PostOnlyWouldCross",
+      "msg": "Post-only limit order would cross a registered maker's resting quote"
+    },
+    {
+      "code": 525,
+      "name": "RegistryBooksMismatch",
+      "msg": "Supplied registry maker books are not exactly the registry's entries"
+    },
+    {
+      "code": 526,
+      "name": "PostOnlyRequiresLimitOrderBook",
+      "msg": "UpdateBookLimit requires a limit-order (LO) maker book"
     },
     {
       "code": 600,

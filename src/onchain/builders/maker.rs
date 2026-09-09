@@ -177,16 +177,10 @@ pub fn create_initialize_maker_book_instruction(
     }
 }
 
-pub fn create_update_book_instruction(
-    maker: impl Into<MakerIdentity>,
-    market: Pubkey,
-    maker_book: Pubkey,
-    params: UpdateBookParams,
-) -> Instruction {
-    let maker = maker.into();
+/// Raw 536-byte `UpdateBookData` for `params`. Byte 0 (the discriminator slot
+/// inside the struct) is left zero for the caller to set.
+pub fn encode_update_book_data(params: &UpdateBookParams) -> Vec<u8> {
     let mut data = vec![0u8; UpdateBookData::LEN];
-
-    data[0] = ArcherInstruction::UpdateBook as u8;
     data[1..9].copy_from_slice(&params.sequence_number.to_le_bytes());
     data[9..17].copy_from_slice(&params.mid_price_ticks.to_le_bytes());
     data[17] = params.bid_levels.len().min(MAX_LEVELS) as u8;
@@ -205,6 +199,18 @@ pub fn create_update_book_instruction(
         data[offset..offset + 8].copy_from_slice(&level.size_in_base_lots.as_u64().to_le_bytes());
         data[offset + 8..offset + 16].copy_from_slice(&level.price_offset_ticks.to_le_bytes());
     }
+    data
+}
+
+pub fn create_update_book_instruction(
+    maker: impl Into<MakerIdentity>,
+    market: Pubkey,
+    maker_book: Pubkey,
+    params: UpdateBookParams,
+) -> Instruction {
+    let maker = maker.into();
+    let mut data = encode_update_book_data(&params);
+    data[0] = ArcherInstruction::UpdateBook as u8;
 
     let mut accounts = vec![
         AccountMeta::new_readonly(maker.signer(), true),
@@ -212,6 +218,48 @@ pub fn create_update_book_instruction(
         AccountMeta::new_readonly(market, false),
     ];
     accounts.extend(maker.trailing_archer_account());
+
+    Instruction {
+        program_id: crate::ARCHER_V1_PROGRAM_ID,
+        accounts,
+        data,
+    }
+}
+
+/// `UpdateBookLimit` (36): `UpdateBook` for LO books with on-chain post-only
+/// enforcement against the market's registered makers.
+///
+/// Data is `[36, cross_policy, UpdateBookData(536)]`. After the fixed accounts
+/// (and the ArcherAccount, if the identity has one) come exactly the
+/// registry's maker books, each once, in any order — the program rejects a
+/// wrong count, a duplicate or an unregistered book with
+/// `RegistryBooksMismatch` (525). `cross_policy` is `0` to reject a crossing
+/// level (`PostOnlyWouldCross`, 524) or `1` to place it anyway.
+pub fn create_update_book_limit_instruction(
+    maker: impl Into<MakerIdentity>,
+    market: Pubkey,
+    maker_book: Pubkey,
+    maker_registry: Pubkey,
+    registry_books: &[Pubkey],
+    cross_policy: u8,
+    params: UpdateBookParams,
+) -> Instruction {
+    let maker = maker.into();
+    let mut data = vec![ArcherInstruction::UpdateBookLimit as u8, cross_policy];
+    data.extend_from_slice(&encode_update_book_data(&params));
+
+    let mut accounts = vec![
+        AccountMeta::new_readonly(maker.signer(), true),
+        AccountMeta::new(maker_book, false),
+        AccountMeta::new_readonly(market, false),
+        AccountMeta::new_readonly(maker_registry, false),
+    ];
+    accounts.extend(maker.trailing_archer_account());
+    accounts.extend(
+        registry_books
+            .iter()
+            .map(|book| AccountMeta::new_readonly(*book, false)),
+    );
 
     Instruction {
         program_id: crate::ARCHER_V1_PROGRAM_ID,

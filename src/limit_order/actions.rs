@@ -1,5 +1,10 @@
 //! High-level, stateless limit-order action builders.
 //!
+//! Every book write here is an `UpdateBookLimit`: limit orders are post-only
+//! by construction and always carry the market's registered maker books
+//! ([`PostOnly`]). `UpdateBook` is the market-maker path and is not used for
+//! limit orders.
+//!
 //! These functions take a snapshot of on-chain state (`Option<&MakerBook>`)
 //! plus the user's intent, and return the list of instructions to land plus
 //! the resulting limit-order IDs. Async fetching is in `ArcherClient`.
@@ -12,7 +17,8 @@ use crate::onchain::{
     builders::{
         create_clear_book_instruction, create_close_maker_book_instruction,
         create_initialize_maker_book_instruction, create_maker_deposit_funds_instruction,
-        create_maker_withdraw_funds_instruction, create_update_book_instruction, UpdateBookParams,
+        create_maker_withdraw_funds_instruction, create_update_book_limit_instruction,
+        UpdateBookParams,
     },
     ArcherUnit, BaseLots, MakerBook, MakerDepositFundsParams, MakerLevel, MakerWithdrawFundsParams,
     QuoteLots,
@@ -22,11 +28,10 @@ use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use crate::config::MarketConfig;
 use crate::error::{ArcherSDKError, SdkResult};
 use crate::identity::Identity;
-use crate::math::ticks::price_to_ticks;
 use crate::pda;
 
 use super::book::{resolve_new_order, LocalBook};
-use super::types::{LimitOrderId, NewLimitOrder};
+use super::types::{LimitOrderId, NewLimitOrder, PostOnly};
 
 /// Optional collateral movement bundled into a place/cancel call.
 ///
@@ -65,18 +70,22 @@ pub struct LimitOrderActionResult {
 /// Place one or more limit orders. Bootstraps the MakerBook if needed.
 ///
 /// Behaviour:
-/// * If the user has no MakerBook on chain, prepends `InitializeMakerBook`.
+/// * If the user has no MakerBook on chain, prepends `InitializeMakerBook`
+///   (kind LO).
 /// * If `deposit` is supplied, inserts `MakerDepositFunds` between init and
-///   `UpdateBook`. Required when the book lacks free collateral for the
+///   the book update. Required when the book lacks free collateral for the
 ///   requested orders.
-/// * Anchor mid is `book.mid_price_ticks` if the book exists and has a
-///   non-zero anchor; otherwise the first order's absolute price in ticks.
+/// * LO books are anchored at mid 0: offsets are absolute prices.
+/// * The write is an `UpdateBookLimit`: the program rejects a placed level
+///   that crosses a registered maker (`PostOnlyWouldCross`) unless
+///   `post_only.cross_policy` is [`CrossPolicy::Allow`](super::CrossPolicy).
 pub fn build_place(
     owner: impl Into<Identity>,
     market: &Pubkey,
     current_book: Option<&MakerBook>,
     orders: &[NewLimitOrder],
     deposit: Option<CollateralArgs>,
+    post_only: &PostOnly,
     config: &MarketConfig,
 ) -> SdkResult<LimitOrderActionResult> {
     let identity = owner.into();
@@ -84,29 +93,15 @@ pub fn build_place(
         return Err(ArcherSDKError::EmptyOrderList);
     }
 
-    let (anchor, mut local, current_seq, needs_init) = match current_book {
-        Some(book) if book.mid_price_ticks != 0 => (
-            book.mid_price_ticks,
+    let (mut local, current_seq, needs_init) = match current_book {
+        Some(book) => (
             LocalBook::from_maker_book(book),
             book.last_updated_sequence_number,
             false,
         ),
-        Some(book) => {
-            // Book exists but mid is uninitialized (no levels ever written).
-            // Use first order's price as the anchor.
-            let anchor = price_to_ticks(orders[0].price, config)?;
-            (
-                anchor,
-                LocalBook::new(anchor),
-                book.last_updated_sequence_number,
-                false,
-            )
-        }
-        None => {
-            let anchor = price_to_ticks(orders[0].price, config)?;
-            (anchor, LocalBook::new(anchor), 0u64, true)
-        }
+        None => (LocalBook::new(LO_ANCHOR), 0u64, true),
     };
+    let anchor = local.anchor();
 
     let mut placed_ids = Vec::with_capacity(orders.len());
     for new in orders {
@@ -149,13 +144,14 @@ pub fn build_place(
         }
     }
 
-    instructions.push(update_book_ix(
+    instructions.push(update_book_limit_ix(
         &identity,
         *market,
         maker_book_pda,
         anchor,
         next_seq,
         &local,
+        post_only,
     )?);
 
     Ok(LimitOrderActionResult {
@@ -177,13 +173,11 @@ pub fn build_modify(
     id: LimitOrderId,
     new_price: f64,
     new_size: f64,
+    post_only: &PostOnly,
     config: &MarketConfig,
 ) -> SdkResult<LimitOrderActionResult> {
     let identity = owner.into();
     let anchor = current_book.mid_price_ticks;
-    if anchor == 0 {
-        return Err(ArcherSDKError::AnchorMidUninitialized);
-    }
 
     let mut local = LocalBook::from_maker_book(current_book);
     // Verify the source order exists locally, then drop it.
@@ -199,7 +193,15 @@ pub fn build_modify(
 
     let next_seq = current_book.last_updated_sequence_number + 1;
     let (maker_book_pda, _) = pda::derive_maker_book(market, &identity.maker());
-    let ix = update_book_ix(&identity, *market, maker_book_pda, anchor, next_seq, &local)?;
+    let ix = update_book_limit_ix(
+        &identity,
+        *market,
+        maker_book_pda,
+        anchor,
+        next_seq,
+        &local,
+        post_only,
+    )?;
 
     Ok(LimitOrderActionResult {
         instructions: vec![ix],
@@ -210,12 +212,16 @@ pub fn build_modify(
 
 /// Cancel one or more limit orders atomically. All IDs must currently exist.
 /// Optionally bundles a withdraw of newly freed collateral.
+///
+/// A cancel can never cross, so the program never rejects it under post-only;
+/// the registry set in `post_only` is still required by the instruction.
 pub fn build_cancel(
     owner: impl Into<Identity>,
     market: &Pubkey,
     current_book: &MakerBook,
     ids: &[LimitOrderId],
     withdraw: Option<CollateralArgs>,
+    post_only: &PostOnly,
     config: &MarketConfig,
 ) -> SdkResult<LimitOrderActionResult> {
     let identity = owner.into();
@@ -223,9 +229,6 @@ pub fn build_cancel(
         return Err(ArcherSDKError::EmptyOrderList);
     }
     let anchor = current_book.mid_price_ticks;
-    if anchor == 0 {
-        return Err(ArcherSDKError::AnchorMidUninitialized);
-    }
 
     let mut local = LocalBook::from_maker_book(current_book);
     for id in ids {
@@ -236,13 +239,14 @@ pub fn build_cancel(
     let (maker_book_pda, _) = pda::derive_maker_book(market, &identity.maker());
 
     let mut instructions = Vec::with_capacity(2);
-    instructions.push(update_book_ix(
+    instructions.push(update_book_limit_ix(
         &identity,
         *market,
         maker_book_pda,
         anchor,
         next_seq,
         &local,
+        post_only,
     )?);
 
     append_withdraw(
@@ -296,14 +300,15 @@ pub fn build_cancel_all(
 /// Replace the user's entire active order set in one atomic `UpdateBook`.
 ///
 /// Useful for portfolio-style "this is my new desired state" callers.
-/// Anchor mid is taken from the existing book if present; otherwise from the
-/// first order's price.
+/// LO books are anchored at mid 0; the write is an `UpdateBookLimit` (see
+/// [`build_place`]).
 pub fn build_replace_all(
     owner: impl Into<Identity>,
     market: &Pubkey,
     current_book: Option<&MakerBook>,
     orders: &[NewLimitOrder],
     deposit: Option<CollateralArgs>,
+    post_only: &PostOnly,
     config: &MarketConfig,
 ) -> SdkResult<LimitOrderActionResult> {
     let identity = owner.into();
@@ -312,17 +317,8 @@ pub fn build_replace_all(
     }
 
     let (anchor, current_seq, needs_init) = match current_book {
-        Some(book) if book.mid_price_ticks != 0 => (
-            book.mid_price_ticks,
-            book.last_updated_sequence_number,
-            false,
-        ),
-        Some(book) => (
-            price_to_ticks(orders[0].price, config)?,
-            book.last_updated_sequence_number,
-            false,
-        ),
-        None => (price_to_ticks(orders[0].price, config)?, 0u64, true),
+        Some(book) => (book.mid_price_ticks, book.last_updated_sequence_number, false),
+        None => (LO_ANCHOR, 0u64, true),
     };
 
     let mut local = LocalBook::new(anchor);
@@ -365,13 +361,14 @@ pub fn build_replace_all(
                 ));
         }
     }
-    instructions.push(update_book_ix(
+    instructions.push(update_book_limit_ix(
         &identity,
         *market,
         maker_book_pda,
         anchor,
         next_seq,
         &local,
+        post_only,
     )?);
 
     Ok(LimitOrderActionResult {
@@ -471,28 +468,35 @@ pub fn compute_required_collateral(
     Ok((base, quote))
 }
 
+/// LO books are pinned at mid 0 by the program; offsets are absolute prices.
+const LO_ANCHOR: u64 = 0;
+
 /// Render a `LocalBook` to its sorted `MakerLevel` arrays and wrap into an
-/// `UpdateBook` instruction.
-fn update_book_ix(
+/// `UpdateBookLimit` instruction.
+fn update_book_limit_ix(
     identity: &Identity,
     market: Pubkey,
     maker_book_pda: Pubkey,
     anchor_mid_ticks: u64,
     sequence_number: u64,
     local: &LocalBook,
+    post_only: &PostOnly,
 ) -> SdkResult<Instruction> {
     let (bid_levels, ask_levels): (Vec<MakerLevel>, Vec<MakerLevel>) = local.to_maker_levels()?;
-    Ok(create_update_book_instruction(
-            identity,
-            market,
-            maker_book_pda,
-            UpdateBookParams {
-                mid_price_ticks: anchor_mid_ticks,
-                bid_levels,
-                ask_levels,
-                sequence_number,
-            },
-        ))
+    Ok(create_update_book_limit_instruction(
+        identity,
+        market,
+        maker_book_pda,
+        post_only.registry,
+        &post_only.registry_books,
+        post_only.cross_policy as u8,
+        UpdateBookParams {
+            mid_price_ticks: anchor_mid_ticks,
+            bid_levels,
+            ask_levels,
+            sequence_number,
+        },
+    ))
 }
 
 fn append_withdraw(

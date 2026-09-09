@@ -133,9 +133,9 @@ let books    = client.get_registered_maker_books(&market).await?;
 
 ## Limit orders
 
-Archer's maker books are parametric — levels are offsets from a moving reference
-price, and repricing is one write. `limit_order` presents that as an order book
-with stable, price-keyed order IDs.
+A limit-order book is a `MakerBook` of kind LO: the program pins its mid price
+at 0, so every level's offset *is* its absolute price in ticks. `limit_order`
+presents that as an order book with stable, price-keyed order IDs.
 
 ```rust
 use archer_sdk::prelude::*;
@@ -145,7 +145,7 @@ let result = client.place_limit_orders(&identity, &market, &[
     NewLimitOrder { side: Side::Bid, price: 148.00, size: 2.0 },
     NewLimitOrder { side: Side::Bid, price: 147.50, size: 3.0 },
     NewLimitOrder { side: Side::Ask, price: 149.00, size: 2.5 },
-], collateral).await?;
+], collateral, CrossPolicy::Reject).await?;
 
 for id in result.placed_ids {
     println!("resting at {} on {:?}", id.price_ticks, id.side);
@@ -157,11 +157,19 @@ state locally and submits it as one instruction — placing, modifying and
 cancelling are all the same operation underneath:
 
 ```rust
-client.modify_limit_order(&identity, &market, id, 147.75, 2.5).await?;
+client.modify_limit_order(&identity, &market, id, 147.75, 2.5, CrossPolicy::Reject).await?;
 client.cancel_limit_orders(&identity, &market, &[id]).await?;
 client.cancel_all_limit_orders(&identity, &market).await?;
-client.replace_all_limit_orders(&identity, &market, &new_orders, collateral).await?;
+client.replace_all_limit_orders(&identity, &market, &new_orders, collateral, CrossPolicy::Reject).await?;
 ```
+
+**Post-only by construction.** Every limit-order write is an `UpdateBookLimit`
+(`UpdateBook` is the market-maker path). The program rejects any placed or
+grown level that would cross a *registered* maker's resting quote at placement
+(`PostOnlyWouldCross`, 524) unless you pass `CrossPolicy::Allow`. Cancels and
+size decreases are never rejected. The client fetches the registry right before
+building, since a stale set fails on chain (`RegistryBooksMismatch`, 525); the
+stateless `limit_order::actions` take the same set as a `PostOnly`.
 
 `compute_required_collateral` tells you what a set of orders will lock — using
 the program's exact ceiling arithmetic, so your estimate matches what the chain

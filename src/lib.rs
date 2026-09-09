@@ -67,7 +67,8 @@ pub mod prelude {
             build_replace_all, compute_required_collateral, CollateralArgs, LimitOrderActionResult,
         },
         discovery::{build_ladder, build_ladder_for_side, unique_books_in_order},
-        LimitOrder, LimitOrderBookView, LimitOrderId, LimitOrderRung, LocalBook, NewLimitOrder,
+        CrossPolicy, LimitOrder, LimitOrderBookView, LimitOrderId, LimitOrderRung, LocalBook,
+        NewLimitOrder, PostOnly,
     };
     pub use crate::math::{
         fees::{effective_taker_price, estimate_taker_fees, TakerFees},

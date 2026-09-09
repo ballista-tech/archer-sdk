@@ -181,6 +181,15 @@ pub enum ArcherError {
     #[error("Maker book is suspended; it cannot be closed")]
     MakerBookSuspended = 523,
 
+    #[error("Post-only limit order would cross a registered maker's resting quote")]
+    PostOnlyWouldCross = 524,
+
+    #[error("Supplied registry maker books are not exactly the registry's entries")]
+    RegistryBooksMismatch = 525,
+
+    #[error("UpdateBookLimit requires a limit-order (LO) maker book")]
+    PostOnlyRequiresLimitOrderBook = 526,
+
     // 6xx — Fee
     #[error("Invalid maker fee")]
     InvalidFee = 600,

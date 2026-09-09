@@ -27,7 +27,7 @@ use crate::limit_order::{
         build_replace_all, CollateralArgs, LimitOrderActionResult,
     },
     discovery::{build_ladder, build_ladder_for_side, filter_active},
-    LimitOrderBookView, LimitOrderId, LimitOrderRung, NewLimitOrder,
+    CrossPolicy, LimitOrderBookView, LimitOrderId, LimitOrderRung, NewLimitOrder, PostOnly,
 };
 use crate::pda;
 use crate::types::{MakerBook, MakerRegistry};
@@ -317,10 +317,26 @@ impl ArcherClient {
         market: &Pubkey,
         orders: &[NewLimitOrder],
         deposit: Option<CollateralArgs>,
+        cross_policy: CrossPolicy,
     ) -> SdkResult<LimitOrderActionResult> {
         let config = self.get_market_config(market).await?;
         let book = self.get_maker_book_optional(market, owner).await?;
-        build_place(owner, market, book.as_ref(), orders, deposit, &config)
+        let post_only = self.get_post_only(market, cross_policy).await?;
+        build_place(owner, market, book.as_ref(), orders, deposit, &post_only, &config)
+    }
+
+    /// Fetch the market's registry and package it as the [`PostOnly`] every
+    /// limit-order action carries. The convenience methods below call this
+    /// right before building so the registry set is current; a stale set is
+    /// rejected on chain with `RegistryBooksMismatch`.
+    pub async fn get_post_only(
+        &self,
+        market: &Pubkey,
+        cross_policy: CrossPolicy,
+    ) -> SdkResult<PostOnly> {
+        let (registry_pda, _) = pda::derive_maker_registry(market);
+        let registry = self.get_maker_registry(market).await?;
+        Ok(PostOnly::from_registry(registry_pda, &registry, cross_policy))
     }
 
     /// Modify a single existing limit order (price and/or size).
@@ -331,13 +347,15 @@ impl ArcherClient {
         id: LimitOrderId,
         new_price: f64,
         new_size: f64,
+        cross_policy: CrossPolicy,
     ) -> SdkResult<LimitOrderActionResult> {
         let config = self.get_market_config(market).await?;
         let book = self
             .get_maker_book_optional(market, owner)
             .await?
             .ok_or(ArcherSDKError::NoMakerBook)?;
-        build_modify(owner, market, &book, id, new_price, new_size, &config)
+        let post_only = self.get_post_only(market, cross_policy).await?;
+        build_modify(owner, market, &book, id, new_price, new_size, &post_only, &config)
     }
 
     /// Cancel one or more limit orders atomically.
@@ -353,7 +371,8 @@ impl ArcherClient {
             .get_maker_book_optional(market, owner)
             .await?
             .ok_or(ArcherSDKError::NoMakerBook)?;
-        build_cancel(owner, market, &book, ids, withdraw, &config)
+        let post_only = self.get_post_only(market, CrossPolicy::Reject).await?;
+        build_cancel(owner, market, &book, ids, withdraw, &post_only, &config)
     }
 
     /// Cancel every active limit order via `ClearBook`.
@@ -378,10 +397,12 @@ impl ArcherClient {
         market: &Pubkey,
         orders: &[NewLimitOrder],
         deposit: Option<CollateralArgs>,
+        cross_policy: CrossPolicy,
     ) -> SdkResult<LimitOrderActionResult> {
         let config = self.get_market_config(market).await?;
         let book = self.get_maker_book_optional(market, owner).await?;
-        build_replace_all(owner, market, book.as_ref(), orders, deposit, &config)
+        let post_only = self.get_post_only(market, cross_policy).await?;
+        build_replace_all(owner, market, book.as_ref(), orders, deposit, &post_only, &config)
     }
 
     /// Tear down an LO book: ClearBook → optional Withdraw → CloseMakerBook.

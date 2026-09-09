@@ -6,8 +6,10 @@ use archer_sdk::{
     },
     pda,
 };
+use archer_sdk::limit_order::{CrossPolicy, PostOnly};
 use archer_sdk::onchain::{
-    state::DelegatedPlatform, ArcherInstruction, ArcherUnit, MakerBook, MarketStateHeader, Side,
+    state::DelegatedPlatform, ArcherInstruction, ArcherUnit, MakerBook, MakerRegistry,
+    MarketStateHeader, Side,
 };
 use bytemuck::Zeroable;
 use solana_program::instruction::Instruction;
@@ -24,6 +26,16 @@ fn collateral() -> CollateralArgs {
         maker_base_ata: Pubkey::new_unique(),
         maker_quote_ata: Pubkey::new_unique(),
     }
+}
+
+fn post_only(market: Pubkey) -> PostOnly {
+    let (pk, _) = pda::derive_maker_registry(&market);
+    let mut r = MakerRegistry::zeroed();
+    r.market = market;
+    r.num_makers = 2;
+    r.makers[0] = Pubkey::new_unique();
+    r.makers[1] = Pubkey::new_unique();
+    PostOnly::from_registry(pk, &r, CrossPolicy::Reject)
 }
 
 fn orders() -> Vec<NewLimitOrder> {
@@ -78,7 +90,7 @@ fn place_bootstraps_a_book_for_an_archer_account() {
     let identity = Identity::archer_account_at(account, delegate);
 
     // No existing book: this emits init + deposit + update_book.
-    let result = build_place(identity, &market, None, &orders(), Some(collateral()), &cfg).unwrap();
+    let result = build_place(identity, &market, None, &orders(), Some(collateral()), &post_only(market), &cfg).unwrap();
 
     let discs: Vec<u8> = result.instructions.iter().map(disc).collect();
     assert_eq!(
@@ -86,14 +98,14 @@ fn place_bootstraps_a_book_for_an_archer_account() {
         vec![
             ArcherInstruction::InitializeMakerBook as u8,
             ArcherInstruction::MakerDepositFunds as u8,
-            ArcherInstruction::UpdateBook as u8,
+            ArcherInstruction::UpdateBookLimit as u8,
         ]
     );
 
     for (ix, label) in result.instructions.iter().zip([
         "InitializeMakerBook",
         "MakerDepositFunds",
-        "UpdateBook",
+        "UpdateBookLimit",
     ]) {
         assert_account_is_referenced(ix, &account, &delegate, label);
     }
@@ -134,7 +146,7 @@ fn wallet_lo_path_gains_no_accounts() {
     let market = Pubkey::new_unique();
     let cfg = test_config();
 
-    let wallet = build_place(owner, &market, None, &orders(), Some(collateral()), &cfg).unwrap();
+    let wallet = build_place(owner, &market, None, &orders(), Some(collateral()), &post_only(market), &cfg).unwrap();
 
     // The wallet is the maker AND the signer; nothing is appended.
     for ix in &wallet.instructions {
@@ -153,6 +165,7 @@ fn wallet_lo_path_gains_no_accounts() {
         None,
         &orders(),
         Some(collateral()),
+        &post_only(market),
         &cfg,
     )
     .unwrap();

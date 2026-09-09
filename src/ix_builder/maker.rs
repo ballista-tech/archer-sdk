@@ -99,6 +99,42 @@ pub fn build_update_book_ix(
         )
 }
 
+/// Build an `UpdateBookLimit` instruction: `UpdateBook` for an LO book with
+/// on-chain post-only enforcement against the market's registered makers.
+///
+/// `registry_books` must be exactly the registry's maker books (any order)
+/// and `cross_policy` is `0` (reject a cross, error 524) or `1` (allow). The
+/// `book_update` must carry `new_mid_price_ticks == 0`, as every LO book does.
+/// Most callers want [`crate::limit_order::actions`] with a
+/// [`PostOnly`](crate::limit_order::PostOnly) instead of this raw wrapper.
+pub fn build_update_book_limit_ix(
+    book_update: &BookUpdate,
+    market: &Pubkey,
+    identity: impl Into<Identity>,
+    maker_registry: &Pubkey,
+    registry_books: &[Pubkey],
+    cross_policy: u8,
+    sequence_number: u64,
+) -> Instruction {
+    let identity = identity.into();
+    let (maker_book_pda, _) = crate::pda::derive_maker_book(market, &identity.maker());
+
+    crate::onchain::builders::create_update_book_limit_instruction(
+        identity,
+        *market,
+        maker_book_pda,
+        *maker_registry,
+        registry_books,
+        cross_policy,
+        UpdateBookParams {
+            mid_price_ticks: book_update.new_mid_price_ticks,
+            bid_levels: book_update.bid_levels.clone(),
+            ask_levels: book_update.ask_levels.clone(),
+            sequence_number,
+        },
+    )
+}
+
 /// Build an UpdateMidPrice instruction.
 pub fn build_update_mid_price_ix(
     market: &Pubkey,
