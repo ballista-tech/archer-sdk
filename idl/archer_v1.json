@@ -1449,22 +1449,33 @@
     {
       "name": "UpdateBookLimit",
       "docs": [
-        "Replace the resting levels of a limit-order (LO) maker book with on-chain",
+        "Place, resize or cancel individual levels on a limit-order (LO) maker book, with on-chain",
         "post-only enforcement against the market's registered makers.",
         "",
-        "Semantically UpdateBook plus a check that every level the payload places or grows does not",
-        "cross an eligible registered maker at placement: a bid must sit strictly below",
-        "the best registered ask, an ask strictly above the best registered bid.",
+        "Unlike UpdateBook this does not replace the level set from a client snapshot: only the",
+        "levels named in the ops change. Each op carries the resting size the client last saw; if",
+        "the level's size differs when the instruction lands (a fill got in between), the op fails",
+        "with LevelSizeMismatch (527) instead of writing the old order back. expectedSize == u64::MAX",
+        "skips that check. Collateral is recomputed from the resulting level set exactly as",
+        "UpdateBook does; sides stay sorted and hold at most 16 levels (MakerBookSideFull, 528).",
+        "",
+        "Post-only: a placed or grown bid must sit strictly below the best eligible registered ask,",
+        "an ask strictly above the best eligible registered bid, else PostOnlyWouldCross (524) under",
+        "Reject. Eligible means exactly what the matching engine would fill against; the caller's own",
+        "book is never counted. Cancels and size decreases are never rejected. Unregistered LO books",
+        "are not enumerable on-chain and are checked off-chain by the client.",
         "",
         "WIRE LAYOUT:",
-        "  [0]         discriminator = 36",
-        "  [1]         crossPolicy   u8: 0 = Reject (error 524 on a cross), 1 = Allow",
-        "  [2..538)    UpdateBookData (536 bytes, as for UpdateBook; its byte 0 is",
-        "              ignored; midPriceTicks must be 0)",
+        "  [0]        discriminator = 36",
+        "  [1]        crossPolicy     u8: 0 = Reject, 1 = Allow",
+        "  [2..10)    sequenceNumber  u64 LE (as for UpdateBook)",
+        "  [10]       numOps          u8, 1..=32",
+        "  [11..)     numOps x LevelOp, 25 bytes each: side u8 (0 bid, 1 ask), priceTicks u64 LE,",
+        "             expectedSize u64 LE (0 = none, u64::MAX = any), newSize u64 LE (0 = cancel)",
         "",
-        "After the fixed accounts (and the optional archerAccount), exactly",
-        "makerRegistry.numMakers MakerBook accounts follow, each registry entry once, in any order; error",
-        "525 otherwise. They are required for both cross policies."
+        "After the fixed accounts (and the optional archerAccount), exactly makerRegistry.numMakers",
+        "MakerBook accounts follow, each registry entry once, in any order; error 525 otherwise.",
+        "They are required for both cross policies."
       ],
       "accounts": [
         {
@@ -1505,9 +1516,15 @@
           "type": "u8"
         },
         {
-          "name": "updateBookData",
+          "name": "sequenceNumber",
+          "type": "u64"
+        },
+        {
+          "name": "ops",
           "type": {
-            "defined": "UpdateBookData"
+            "vec": {
+              "defined": "LevelOp"
+            }
           }
         }
       ],
@@ -2362,6 +2379,45 @@
       }
     },
     {
+      "name": "LevelOp",
+      "docs": [
+        "One place / resize / cancel on an LO book, guarded by the resting size the client last observed. 25 bytes on the wire, little-endian, no length prefix."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "side",
+            "type": "u8",
+            "docs": [
+              "0 = bid, 1 = ask"
+            ]
+          },
+          {
+            "name": "priceTicks",
+            "type": "u64",
+            "docs": [
+              "Absolute price in ticks; must be > 0"
+            ]
+          },
+          {
+            "name": "expectedSize",
+            "type": "u64",
+            "docs": [
+              "Resting size the client observed (0 = no level); u64::MAX skips the check"
+            ]
+          },
+          {
+            "name": "newSize",
+            "type": "u64",
+            "docs": [
+              "Size after the op; 0 cancels the level"
+            ]
+          }
+        ]
+      }
+    },
+    {
       "name": "MakerLevel",
       "docs": [
         "One resting price level. 16 bytes."
@@ -2403,6 +2459,9 @@
           },
           {
             "name": "Closed"
+          },
+          {
+            "name": "Frozen"
           }
         ]
       }
@@ -2799,6 +2858,11 @@
       "msg": "Market is not paused"
     },
     {
+      "code": 114,
+      "name": "MarketFrozen",
+      "msg": "Market is frozen; vault outflows are halted"
+    },
+    {
       "code": 200,
       "name": "InvalidAccount",
       "msg": "Invalid account"
@@ -3057,6 +3121,16 @@
       "code": 526,
       "name": "PostOnlyRequiresLimitOrderBook",
       "msg": "UpdateBookLimit requires a limit-order (LO) maker book"
+    },
+    {
+      "code": 527,
+      "name": "LevelSizeMismatch",
+      "msg": "Level op expected a different resting size; the order changed since it was prepared"
+    },
+    {
+      "code": 528,
+      "name": "MakerBookSideFull",
+      "msg": "Maker book side already holds the maximum number of levels"
     },
     {
       "code": 600,

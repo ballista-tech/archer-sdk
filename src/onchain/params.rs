@@ -59,6 +59,10 @@ impl ChangeMarketStatusParams {
 
         match (current_status, new_status) {
             (MarketStatus::Closed, _) => Err(crate::onchain::errors::ArcherError::MarketNotActive),
+            (MarketStatus::Frozen, MarketStatus::Paused) => Ok(()),
+            (MarketStatus::Frozen, _) => {
+                Err(crate::onchain::errors::ArcherError::InvalidStatusTransition)
+            }
             _ => Ok(()),
         }
     }

@@ -59,7 +59,7 @@ pub fn maker_balances(book: &MakerBook, config: &MarketConfig) -> MakerBalances 
     let base_free = base_lots_to_amount(book.base_free.as_u64(), config);
     let base_locked = base_lots_to_amount(book.base_locked.as_u64(), config);
 
-    let projected = book.projected_quote_balances();
+    let projected = book.projected_quote_balances(config.maker_fee_ppm);
     let quote_sync_unfundable = projected.is_err();
     let (quote_locked_lots, quote_free_lots) =
         projected.unwrap_or((book.quote_locked.as_u64(), book.quote_free.as_u64()));

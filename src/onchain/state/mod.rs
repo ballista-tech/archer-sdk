@@ -16,6 +16,7 @@ pub enum MarketStatus {
     Active = 0,
     Paused = 1,
     Closed = 2,
+    Frozen = 3,
 }
 
 impl MarketStatus {
@@ -24,6 +25,7 @@ impl MarketStatus {
             0 => Ok(Self::Active),
             1 => Ok(Self::Paused),
             2 => Ok(Self::Closed),
+            3 => Ok(Self::Frozen),
             _ => Err(ProgramError::InvalidAccountData),
         }
     }
@@ -33,6 +35,7 @@ impl MarketStatus {
             MarketStatus::Active => 0,
             MarketStatus::Paused => 1,
             MarketStatus::Closed => 2,
+            MarketStatus::Frozen => 3,
         }
     }
 
@@ -49,5 +52,15 @@ impl MarketStatus {
     #[inline]
     pub fn is_closed(&self) -> bool {
         matches!(self, Self::Closed)
+    }
+
+    #[inline]
+    pub fn is_frozen(&self) -> bool {
+        matches!(self, Self::Frozen)
+    }
+
+    #[inline]
+    pub fn allows_outflows(&self) -> bool {
+        !self.is_frozen()
     }
 }

@@ -355,26 +355,112 @@ impl MakerBook {
         u64::try_from(result).map_err(|_| ArcherError::ArithmeticOverflow)
     }
 
+    /// `tick_conversion_num / tick_conversion_den` when it is integral, i.e.
+    /// one lot-tick of notional is a whole number of quote lots.
+    fn quote_lots_per_lot_tick(&self) -> Result<u64, ArcherError> {
+        let num = self.tick_conversion_num;
+        let den = self.tick_conversion_den;
+        let rem = num.checked_rem(den).ok_or(ArcherError::InvalidParams)?;
+        if rem != 0 {
+            return Err(ArcherError::InvalidParams);
+        }
+        num.checked_div(den).ok_or(ArcherError::InvalidParams)
+    }
+
+    /// Quote lots the resting bids are worth at the current mid — the exact
+    /// figure `update_book` locks, before the maker-fee buffer.
+    ///
+    /// Closed form `k * Σ size·price` when the tick conversion is integral
+    /// (then every per-level ceiling is exact), else the per-level ceiling sum.
+    pub fn remaining_bid_quote_lots(&self) -> Result<u64, ArcherError> {
+        let k = match self.quote_lots_per_lot_tick() {
+            Ok(k) => k as u128,
+            Err(_) => return self.remaining_bid_quote_lots_ceiling(),
+        };
+        let mid = i64::try_from(self.mid_price_ticks).map_err(|_| ArcherError::InvalidPrice)?;
+
+        let mut weighted: u128 = 0;
+        for level in &self.bid_levels {
+            let size = level.size_in_base_lots.as_u64();
+            if size == 0 {
+                continue;
+            }
+            let price = mid
+                .checked_add(level.price_offset_ticks)
+                .ok_or(ArcherError::InvalidPrice)?;
+            if price <= 0 {
+                return Err(ArcherError::InvalidPrice);
+            }
+            let product = (size as u128)
+                .checked_mul(price as u128)
+                .ok_or(ArcherError::ArithmeticOverflow)?;
+            weighted = weighted
+                .checked_add(product)
+                .ok_or(ArcherError::ArithmeticOverflow)?;
+        }
+
+        let total = weighted
+            .checked_mul(k)
+            .ok_or(ArcherError::ArithmeticOverflow)?;
+        u64::try_from(total).map_err(|_| ArcherError::ArithmeticOverflow)
+    }
+
+    fn remaining_bid_quote_lots_ceiling(&self) -> Result<u64, ArcherError> {
+        let mut total: u64 = 0;
+        for level in &self.bid_levels {
+            if !level.is_active() {
+                continue;
+            }
+            let price = level
+                .absolute_price(self.mid_price_ticks)
+                .ok_or(ArcherError::InvalidPrice)?;
+            let quote = self.compute_quote_lots_ceiling(level.size_in_base_lots.as_u64(), price)?;
+            total = total
+                .checked_add(quote)
+                .ok_or(ArcherError::ArithmeticOverflow)?;
+        }
+        Ok(total)
+    }
+
+    /// Quote lots the program keeps locked for the resting bids at the current
+    /// mid: their notional plus `ceil(notional * maker_fee_ppm / 1e6)` when the
+    /// maker pays a fee. This is what `update_book` locks and what a deferred
+    /// reprice re-locks on sync, so it is fee-inclusive and exact.
+    pub fn required_quote_reserve(&self, maker_fee_ppm: i32) -> Result<u64, ArcherError> {
+        let notional = self.remaining_bid_quote_lots()?;
+        let fee_buffer = if maker_fee_ppm > 0 {
+            let buffer = (notional as u128)
+                .checked_mul(maker_fee_ppm as u128)
+                .ok_or(ArcherError::ArithmeticOverflow)?
+                .checked_add(999_999)
+                .ok_or(ArcherError::ArithmeticOverflow)?
+                .checked_div(1_000_000)
+                .ok_or(ArcherError::ArithmeticOverflow)?;
+            u64::try_from(buffer).map_err(|_| ArcherError::ArithmeticOverflow)?
+        } else {
+            0
+        };
+        notional
+            .checked_add(fee_buffer)
+            .ok_or(ArcherError::ArithmeticOverflow)
+    }
+
     /// `(quote_locked, quote_free)` as they will stand once any deferred
-    /// `update_mid_price` rebalance is replayed — i.e. the true balances, as
+    /// `update_mid_price` rebalance is applied — i.e. the true balances, as
     /// opposed to the possibly-stale values in the struct.
     ///
-    /// Pure: reads only. This is the single definition of the deferred-rebalance
-    /// arithmetic — [`Self::sync_quote_balances`] applies it on-chain, the
-    /// aggregator uses it to decide whether a book is fundable, and off-chain
-    /// consumers should call it instead of reading the raw fields, so there is no
-    /// second implementation to drift.
+    /// Pure: reads only: when the mid has
+    /// moved since the last sync, the reserve is recomputed from the levels
+    /// ([`Self::required_quote_reserve`]) rather than replayed per tick, so
+    /// the result is exact and fee-inclusive. `maker_fee_ppm` is the market's
+    /// current maker fee (`MarketStateHeader::maker_fee_ppm`).
     ///
     /// Returns `InsufficientBalance` when the maker repriced further than their
     /// quote balance can back. The reprice itself is allowed to succeed (that is
     /// the point of deferring), so this is the first place the shortfall is
-    /// observable.
-    ///
-    /// `quote_delta_per_tick` is only changed by `update_book` / `clear_book` /
-    /// settle, all of which re-anchor, so it is constant across the reprices
-    /// being replayed here.
+    /// observable; the aggregator skips such a book.
     #[inline(always)]
-    pub fn projected_quote_balances(&self) -> Result<(u64, u64), ArcherError> {
+    pub fn projected_quote_balances(&self, maker_fee_ppm: i32) -> Result<(u64, u64), ArcherError> {
         let cur = self.mid_price_ticks;
         let anchor = self.mid_at_last_sync;
 
@@ -386,43 +472,19 @@ impl MakerBook {
             return Ok((q_locked, q_free));
         }
 
-        let (delta_price, is_increase) = if cur > anchor {
-            (cur - anchor, true)
-        } else {
-            (anchor - cur, false)
-        };
-
-        let quote_delta = self
-            .quote_delta_per_tick
-            .checked_mul(delta_price)
-            .ok_or(ArcherError::ArithmeticOverflow)?;
-
-        if is_increase {
-            let nl = q_locked
-                .checked_add(quote_delta)
-                .ok_or(ArcherError::ArithmeticOverflow)?;
-            let nf = q_free
-                .checked_sub(quote_delta)
-                .ok_or(ArcherError::InsufficientBalance)?;
-            Ok((nl, nf))
-        } else {
-            let nl = q_locked
-                .checked_sub(quote_delta)
-                .ok_or(ArcherError::InsufficientBalance)?;
-            let nf = q_free
-                .checked_add(quote_delta)
-                .ok_or(ArcherError::ArithmeticOverflow)?;
-            Ok((nl, nf))
-        }
+        let total = self.quote_lots_total()?;
+        let locked = self.required_quote_reserve(maker_fee_ppm)?;
+        let free = total
+            .checked_sub(locked)
+            .ok_or(ArcherError::InsufficientBalance)?;
+        Ok((locked, free))
     }
 
-    /// True when a deferred rebalance is pending and cannot be funded, so the
-    /// book must not participate in an auction. Cheaper to ask than to handle a
-    /// mid-settlement failure, and unlike [`Self::sync_quote_balances`] it needs
-    /// no write access.
+    /// True when any pending rebalance can be funded, so the book may
+    /// participate in an auction. Unfundable books are skipped by the program.
     #[inline(always)]
-    pub fn is_quote_sync_fundable(&self) -> bool {
-        self.projected_quote_balances().is_ok()
+    pub fn is_quote_sync_fundable(&self, maker_fee_ppm: i32) -> bool {
+        self.projected_quote_balances(maker_fee_ppm).is_ok()
     }
 
     /// Whether the aggregator would skip this book as stale at `current_slot`.

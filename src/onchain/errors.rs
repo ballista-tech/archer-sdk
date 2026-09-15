@@ -30,6 +30,9 @@ pub enum ArcherError {
     #[error("Market is not paused")]
     MarketNotPaused = 109,
 
+    #[error("Market is frozen; vault outflows are halted")]
+    MarketFrozen = 114,
+
     // 2xx — Account validation
     #[error("Invalid account")]
     InvalidAccount = 200,
@@ -189,6 +192,12 @@ pub enum ArcherError {
 
     #[error("UpdateBookLimit requires a limit-order (LO) maker book")]
     PostOnlyRequiresLimitOrderBook = 526,
+
+    #[error("Level op expected a different resting size; the order changed since it was prepared")]
+    LevelSizeMismatch = 527,
+
+    #[error("Maker book side already holds the maximum number of levels")]
+    MakerBookSideFull = 528,
 
     // 6xx — Fee
     #[error("Invalid maker fee")]
