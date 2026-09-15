@@ -27,7 +27,8 @@ use crate::limit_order::{
         build_replace_all, CollateralArgs, LimitOrderActionResult,
     },
     discovery::{build_ladder, build_ladder_for_side, filter_active},
-    CrossPolicy, LimitOrderBookView, LimitOrderId, LimitOrderRung, NewLimitOrder, PostOnly,
+    CancelMode, CrossPolicy, LimitOrderBookView, LimitOrderId, LimitOrderRung, NewLimitOrder,
+    PostOnly,
 };
 use crate::pda;
 use crate::types::{MakerBook, MakerRegistry};
@@ -339,7 +340,8 @@ impl ArcherClient {
         Ok(PostOnly::from_registry(registry_pda, &registry, cross_policy))
     }
 
-    /// Modify a single existing limit order (price and/or size).
+    /// Modify a single existing limit order (price and/or size). Cancels use
+    /// [`CancelMode::Any`]; drop to [`build_modify`] for a strict guard.
     pub async fn modify_limit_order(
         &self,
         owner: &Pubkey,
@@ -355,10 +357,22 @@ impl ArcherClient {
             .await?
             .ok_or(ArcherSDKError::NoMakerBook)?;
         let post_only = self.get_post_only(market, cross_policy).await?;
-        build_modify(owner, market, &book, id, new_price, new_size, &post_only, &config)
+        build_modify(
+            owner,
+            market,
+            &book,
+            id,
+            new_price,
+            new_size,
+            &post_only,
+            CancelMode::default(),
+            &config,
+        )
     }
 
-    /// Cancel one or more limit orders atomically.
+    /// Cancel one or more limit orders atomically, removing whatever still
+    /// rests at each price ([`CancelMode::Any`]); drop to [`build_cancel`]
+    /// for a strict guard.
     pub async fn cancel_limit_orders(
         &self,
         owner: &Pubkey,
@@ -372,7 +386,16 @@ impl ArcherClient {
             .await?
             .ok_or(ArcherSDKError::NoMakerBook)?;
         let post_only = self.get_post_only(market, CrossPolicy::Reject).await?;
-        build_cancel(owner, market, &book, ids, withdraw, &post_only, &config)
+        build_cancel(
+            owner,
+            market,
+            &book,
+            ids,
+            withdraw,
+            &post_only,
+            CancelMode::default(),
+            &config,
+        )
     }
 
     /// Cancel every active limit order via `ClearBook`.
@@ -390,7 +413,8 @@ impl ArcherClient {
         build_cancel_all(owner, market, &book, withdraw, &config)
     }
 
-    /// Replace the user's entire active order set with the supplied list.
+    /// Replace the user's entire active order set with the supplied list,
+    /// touching only the levels that differ.
     pub async fn replace_all_limit_orders(
         &self,
         owner: &Pubkey,
@@ -402,7 +426,16 @@ impl ArcherClient {
         let config = self.get_market_config(market).await?;
         let book = self.get_maker_book_optional(market, owner).await?;
         let post_only = self.get_post_only(market, cross_policy).await?;
-        build_replace_all(owner, market, book.as_ref(), orders, deposit, &post_only, &config)
+        build_replace_all(
+            owner,
+            market,
+            book.as_ref(),
+            orders,
+            deposit,
+            &post_only,
+            CancelMode::default(),
+            &config,
+        )
     }
 
     /// Tear down an LO book: ClearBook → optional Withdraw → CloseMakerBook.

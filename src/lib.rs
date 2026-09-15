@@ -67,8 +67,8 @@ pub mod prelude {
             build_replace_all, compute_required_collateral, CollateralArgs, LimitOrderActionResult,
         },
         discovery::{build_ladder, build_ladder_for_side, unique_books_in_order},
-        CrossPolicy, LimitOrder, LimitOrderBookView, LimitOrderId, LimitOrderRung, LocalBook,
-        NewLimitOrder, PostOnly,
+        CancelMode, CrossPolicy, LimitOrder, LimitOrderBookView, LimitOrderId, LimitOrderRung,
+        LocalBook, NewLimitOrder, PostOnly,
     };
     pub use crate::math::{
         fees::{effective_taker_price, estimate_taker_fees, TakerFees},
@@ -77,6 +77,7 @@ pub mod prelude {
         BookUpdate, Quote, TwoSidedQuote,
     };
     pub use crate::onchain::state::DelegatedPlatform;
+    pub use crate::onchain::LevelOp;
     pub use crate::pda;
     pub use crate::ARCHER_V1_PROGRAM_ID;
 }

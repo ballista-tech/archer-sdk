@@ -5,9 +5,11 @@ use solana_program::{
 };
 
 use crate::onchain::{
-    ArcherInstruction, ArcherUnit, MakerDepositFundsParams, MakerLevel,
-    MakerWithdrawFundsParams, Ticks, UpdateBookData, MAKER_LEVEL_SIZE, MAX_LEVELS,
+    encode_level_ops, ArcherInstruction, ArcherUnit, LevelOp, MakerDepositFundsParams,
+    MakerLevel, MakerWithdrawFundsParams, Ticks, UpdateBookData, MAKER_LEVEL_SIZE, MAX_LEVELS,
 };
+#[allow(unused_imports)]
+use crate::onchain::{CROSS_POLICY_ALLOW, CROSS_POLICY_REJECT};
 
 #[derive(Debug)]
 pub struct UpdateBookParams {
@@ -226,15 +228,19 @@ pub fn create_update_book_instruction(
     }
 }
 
-/// `UpdateBookLimit` (36): `UpdateBook` for LO books with on-chain post-only
-/// enforcement against the market's registered makers.
+/// `UpdateBookLimit` (36): place, resize or cancel individual levels on an
+/// LO book with on-chain post-only enforcement against the market's
+/// registered makers.
 ///
-/// Data is `[36, cross_policy, UpdateBookData(536)]`. After the fixed accounts
-/// (and the ArcherAccount, if the identity has one) come exactly the
-/// registry's maker books, each once, in any order — the program rejects a
-/// wrong count, a duplicate or an unregistered book with
-/// `RegistryBooksMismatch` (525). `cross_policy` is `0` to reject a crossing
-/// level (`PostOnlyWouldCross`, 524) or `1` to place it anyway.
+/// Data is `[36, cross_policy, sequence u64 LE, num_ops u8, ops…]` with one
+/// 25-byte [`LevelOp`] per op, `1..=MAX_LEVEL_OPS` of them (the function
+/// panics outside that range; chunk first). After the fixed accounts (and the
+/// ArcherAccount, if the identity has one) come exactly the registry's maker
+/// books, each once, in any order — the program rejects a wrong count, a
+/// duplicate or an unregistered book with `RegistryBooksMismatch` (525).
+/// `cross_policy` is [`CROSS_POLICY_REJECT`] to fail a crossing place/grow
+/// (`PostOnlyWouldCross`, 524) or [`CROSS_POLICY_ALLOW`] to place it anyway.
+#[allow(clippy::too_many_arguments)]
 pub fn create_update_book_limit_instruction(
     maker: impl Into<MakerIdentity>,
     market: Pubkey,
@@ -242,11 +248,11 @@ pub fn create_update_book_limit_instruction(
     maker_registry: Pubkey,
     registry_books: &[Pubkey],
     cross_policy: u8,
-    params: UpdateBookParams,
+    sequence_number: u64,
+    ops: &[LevelOp],
 ) -> Instruction {
     let maker = maker.into();
-    let mut data = vec![ArcherInstruction::UpdateBookLimit as u8, cross_policy];
-    data.extend_from_slice(&encode_update_book_data(&params));
+    let data = encode_level_ops(cross_policy, sequence_number, ops);
 
     let mut accounts = vec![
         AccountMeta::new_readonly(maker.signer(), true),

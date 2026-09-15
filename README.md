@@ -152,16 +152,29 @@ for id in result.placed_ids {
 }
 ```
 
-Because every update rewrites the whole book, the SDK computes the resulting
-state locally and submits it as one instruction — placing, modifying and
-cancelling are all the same operation underneath:
+Every action diffs the book you fetched against what you want and sends one
+compare-and-set op per touched level. Placing, modifying and cancelling are
+the same instruction underneath, `UpdateBookLimit`, and only the named levels
+change:
 
 ```rust
 client.modify_limit_order(&identity, &market, id, 147.75, 2.5, CrossPolicy::Reject).await?;
-client.cancel_limit_orders(&identity, &market, &[id]).await?;
-client.cancel_all_limit_orders(&identity, &market).await?;
+client.cancel_limit_orders(&identity, &market, &[id], None).await?;
+client.cancel_all_limit_orders(&identity, &market, None).await?;
 client.replace_all_limit_orders(&identity, &market, &new_orders, collateral, CrossPolicy::Reject).await?;
 ```
+
+**Fills cannot be overwritten.** Each op carries the resting size the SDK saw
+when it built the instruction. If a fill lands in between, the chain sees a
+different size and fails the whole instruction with `LevelSizeMismatch` (527)
+instead of writing the old order back: refetch the book and rebuild. Places
+expect an empty slot and resizes expect the observed size, always. Cancels
+default to `CancelMode::Any`, removing whatever still rests, since writing zero
+can never resurrect filled size; pass `CancelMode::Strict` to the stateless
+`limit_order::actions` if you want a cancel to fail on a changed size too. A
+`cancel_all` is a single `ClearBook` and needs no guard. An instruction holds
+at most 32 ops; larger batches are split across consecutive instructions with
+consecutive sequence numbers, all returned in one `LimitOrderActionResult`.
 
 **Post-only by construction.** Every limit-order write is an `UpdateBookLimit`
 (`UpdateBook` is the market-maker path). The program rejects any placed or
@@ -169,7 +182,9 @@ grown level that would cross a *registered* maker's resting quote at placement
 (`PostOnlyWouldCross`, 524) unless you pass `CrossPolicy::Allow`. Cancels and
 size decreases are never rejected. The client fetches the registry right before
 building, since a stale set fails on chain (`RegistryBooksMismatch`, 525); the
-stateless `limit_order::actions` take the same set as a `PostOnly`.
+stateless `limit_order::actions` take the same set as a `PostOnly`. A
+registered book that has since been closed is skipped by the program, but its
+key must still be passed.
 
 `compute_required_collateral` tells you what a set of orders will lock — using
 the program's exact ceiling arithmetic, so your estimate matches what the chain

@@ -35,6 +35,23 @@ pub enum CrossPolicy {
     Allow = 1,
 }
 
+/// What guard a cancel op carries against a fill landing between the client's
+/// read and the write.
+///
+/// Cancelling to zero can never resurrect filled size, so the default is to
+/// cancel whatever still rests. Places and resizes are always strict — they
+/// carry the observed size and fail with `LevelSizeMismatch` (527) if it
+/// changed — because writing a size over a partially filled level would
+/// re-expose the lots that were already sold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CancelMode {
+    /// `expected_size = ANY`: remove the level regardless of its current size.
+    #[default]
+    Any,
+    /// `expected_size = observed`: fail if the level changed since the read.
+    Strict,
+}
+
 /// The registry set every limit-order action carries: all limit-order writes
 /// are `UpdateBookLimit`, so the program enforces post-only against the
 /// market's registered makers at placement.

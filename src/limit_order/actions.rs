@@ -11,17 +11,21 @@
 //!
 //! All actions follow the "read-modify-write" pattern: the caller fetches the
 //! current `MakerBook` (if any), passes it in, gets back instructions, then
-//! signs and sends.
+//! signs and sends. The write is a list of per-level compare-and-set ops
+//! ([`LevelOp`]) derived from the snapshot, so a fill that lands between the
+//! read and the write fails the instruction (`LevelSizeMismatch`, 527) and the
+//! caller refetches and rebuilds — nothing is ever written back over a fill.
+//! An instruction carries at most 32 ops; larger batches are split across
+//! consecutive `UpdateBookLimit`s with consecutive sequence numbers.
 
 use crate::onchain::{
     builders::{
         create_clear_book_instruction, create_close_maker_book_instruction,
         create_initialize_maker_book_instruction, create_maker_deposit_funds_instruction,
         create_maker_withdraw_funds_instruction, create_update_book_limit_instruction,
-        UpdateBookParams,
     },
-    ArcherUnit, BaseLots, MakerBook, MakerDepositFundsParams, MakerLevel, MakerWithdrawFundsParams,
-    QuoteLots,
+    ArcherUnit, BaseLots, LevelOp, MakerBook, MakerDepositFundsParams, MakerWithdrawFundsParams,
+    QuoteLots, MAX_LEVEL_OPS,
 };
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 
@@ -31,7 +35,7 @@ use crate::identity::Identity;
 use crate::pda;
 
 use super::book::{resolve_new_order, LocalBook};
-use super::types::{LimitOrderId, NewLimitOrder, PostOnly};
+use super::types::{CancelMode, LimitOrderId, NewLimitOrder, PostOnly};
 
 /// Optional collateral movement bundled into a place/cancel call.
 ///
@@ -75,10 +79,14 @@ pub struct LimitOrderActionResult {
 /// * If `deposit` is supplied, inserts `MakerDepositFunds` between init and
 ///   the book update. Required when the book lacks free collateral for the
 ///   requested orders.
-/// * LO books are anchored at mid 0: offsets are absolute prices.
+/// * Emits one place op per order, each expecting an empty slot at its
+///   price, so a level that appeared there in between fails the write.
 /// * The write is an `UpdateBookLimit`: the program rejects a placed level
 ///   that crosses a registered maker (`PostOnlyWouldCross`) unless
-///   `post_only.cross_policy` is [`CrossPolicy::Allow`](super::CrossPolicy).
+///   `post_only.cross_policy` is `Allow`.
+///
+/// Fails locally if an order would duplicate a resting price, overfill a
+/// side, or cross the user's own book.
 pub fn build_place(
     owner: impl Into<Identity>,
     market: &Pubkey,
@@ -95,64 +103,43 @@ pub fn build_place(
 
     let (mut local, current_seq, needs_init) = match current_book {
         Some(book) => (
-            LocalBook::from_maker_book(book),
+            LocalBook::from_maker_book(book)?,
             book.last_updated_sequence_number,
             false,
         ),
-        None => (LocalBook::new(LO_ANCHOR), 0u64, true),
+        None => (LocalBook::empty(), 0u64, true),
     };
-    let anchor = local.anchor();
 
+    let mut ops = Vec::with_capacity(orders.len());
     let mut placed_ids = Vec::with_capacity(orders.len());
     for new in orders {
         let (id, size_lots) = resolve_new_order(new, config)?;
-        local.place(id, size_lots)?;
+        ops.push(local.place(id, size_lots)?);
         placed_ids.push(id);
     }
+    local.check_not_crossed()?;
 
-    let next_seq = current_seq + 1;
     let (maker_book_pda, _) = pda::derive_maker_book(market, &identity.maker());
     let mut instructions = Vec::with_capacity(3);
 
     if needs_init {
         instructions.push(create_initialize_maker_book_instruction(
-                identity,
-                *market,
-                crate::onchain::MAKER_KIND_LO,
-            ));
+            identity,
+            *market,
+            crate::onchain::MAKER_KIND_LO,
+        ));
     }
+    append_deposit(&mut instructions, &identity, market, maker_book_pda, deposit, config);
 
-    if let Some(dep) = deposit {
-        if dep.base_lots > 0 || dep.quote_lots > 0 {
-            instructions.push(create_maker_deposit_funds_instruction(
-                    MakerDepositFundsParams {
-                        base_lots: BaseLots::new(dep.base_lots),
-                        quote_lots: QuoteLots::new(dep.quote_lots),
-                    },
-                    identity,
-                    maker_book_pda,
-                    *market,
-                    config.base_mint,
-                    config.quote_mint,
-                    dep.maker_base_ata,
-                    dep.maker_quote_ata,
-                    config.base_vault,
-                    config.quote_vault,
-                    config.base_token_program,
-                    config.quote_token_program,
-                ));
-        }
-    }
-
-    instructions.push(update_book_limit_ix(
+    let next_seq = push_level_ops(
+        &mut instructions,
         &identity,
-        *market,
+        market,
         maker_book_pda,
-        anchor,
-        next_seq,
-        &local,
         post_only,
-    )?);
+        current_seq,
+        &ops,
+    );
 
     Ok(LimitOrderActionResult {
         instructions,
@@ -164,8 +151,10 @@ pub fn build_place(
 /// Modify an existing limit order's price and/or size.
 ///
 /// Returns the *new* `LimitOrderId` in `placed_ids[0]`. If `new_price` rounds
-/// to the same tick offset as the old order, only the size changes and the ID
-/// is preserved; otherwise the operation is semantically cancel + place.
+/// to the same tick as the old order, this is a single strict resize op and
+/// the ID is preserved; otherwise it is a cancel (under `cancel_mode`) plus a
+/// place at the new price, in one instruction. `new_size` of zero cancels.
+#[allow(clippy::too_many_arguments)]
 pub fn build_modify(
     owner: impl Into<Identity>,
     market: &Pubkey,
@@ -174,14 +163,11 @@ pub fn build_modify(
     new_price: f64,
     new_size: f64,
     post_only: &PostOnly,
+    cancel_mode: CancelMode,
     config: &MarketConfig,
 ) -> SdkResult<LimitOrderActionResult> {
     let identity = owner.into();
-    let anchor = current_book.mid_price_ticks;
-
-    let mut local = LocalBook::from_maker_book(current_book);
-    // Verify the source order exists locally, then drop it.
-    local.cancel(id)?;
+    let mut local = LocalBook::from_maker_book(current_book)?;
 
     let new = NewLimitOrder {
         side: id.side,
@@ -189,32 +175,49 @@ pub fn build_modify(
         size: new_size,
     };
     let (new_id, new_size_lots) = resolve_new_order(&new, config)?;
-    local.place(new_id, new_size_lots)?;
 
-    let next_seq = current_book.last_updated_sequence_number + 1;
+    let (ops, placed_ids) = if new_id == id {
+        let op = local.resize(id, new_size_lots)?;
+        let still_resting = if new_size_lots == 0 { Vec::new() } else { vec![id] };
+        (vec![op], still_resting)
+    } else {
+        let cancel = local.cancel(id, cancel_mode)?;
+        if new_size_lots == 0 {
+            (vec![cancel], Vec::new())
+        } else {
+            let place = local.place(new_id, new_size_lots)?;
+            (vec![cancel, place], vec![new_id])
+        }
+    };
+    local.check_not_crossed()?;
+
     let (maker_book_pda, _) = pda::derive_maker_book(market, &identity.maker());
-    let ix = update_book_limit_ix(
+    let mut instructions = Vec::with_capacity(1);
+    let next_seq = push_level_ops(
+        &mut instructions,
         &identity,
-        *market,
+        market,
         maker_book_pda,
-        anchor,
-        next_seq,
-        &local,
         post_only,
-    )?;
+        current_book.last_updated_sequence_number,
+        &ops,
+    );
 
     Ok(LimitOrderActionResult {
-        instructions: vec![ix],
-        placed_ids: vec![new_id],
+        instructions,
+        placed_ids,
         next_sequence_number: next_seq,
     })
 }
 
-/// Cancel one or more limit orders atomically. All IDs must currently exist.
-/// Optionally bundles a withdraw of newly freed collateral.
+/// Cancel one or more limit orders atomically. All IDs must currently exist
+/// in the snapshot. Optionally bundles a withdraw of newly freed collateral.
 ///
 /// A cancel can never cross, so the program never rejects it under post-only;
 /// the registry set in `post_only` is still required by the instruction.
+/// `cancel_mode` picks the guard: [`CancelMode::Any`] removes whatever still
+/// rests, [`CancelMode::Strict`] fails if a fill changed the size in between.
+#[allow(clippy::too_many_arguments)]
 pub fn build_cancel(
     owner: impl Into<Identity>,
     market: &Pubkey,
@@ -222,32 +225,31 @@ pub fn build_cancel(
     ids: &[LimitOrderId],
     withdraw: Option<CollateralArgs>,
     post_only: &PostOnly,
+    cancel_mode: CancelMode,
     config: &MarketConfig,
 ) -> SdkResult<LimitOrderActionResult> {
     let identity = owner.into();
     if ids.is_empty() {
         return Err(ArcherSDKError::EmptyOrderList);
     }
-    let anchor = current_book.mid_price_ticks;
 
-    let mut local = LocalBook::from_maker_book(current_book);
+    let mut local = LocalBook::from_maker_book(current_book)?;
+    let mut ops = Vec::with_capacity(ids.len());
     for id in ids {
-        local.cancel(*id)?;
+        ops.push(local.cancel(*id, cancel_mode)?);
     }
 
-    let next_seq = current_book.last_updated_sequence_number + 1;
     let (maker_book_pda, _) = pda::derive_maker_book(market, &identity.maker());
-
     let mut instructions = Vec::with_capacity(2);
-    instructions.push(update_book_limit_ix(
+    let next_seq = push_level_ops(
+        &mut instructions,
         &identity,
-        *market,
+        market,
         maker_book_pda,
-        anchor,
-        next_seq,
-        &local,
         post_only,
-    )?);
+        current_book.last_updated_sequence_number,
+        &ops,
+    );
 
     append_withdraw(
         &mut instructions,
@@ -265,8 +267,8 @@ pub fn build_cancel(
     })
 }
 
-/// Cancel every active order via `ClearBook`. Cheaper than rewriting the whole
-/// book with `UpdateBook` when the user wants a wipe.
+/// Cancel every active order via `ClearBook`. One instruction regardless of
+/// how many orders rest, and it needs no registry set.
 pub fn build_cancel_all(
     owner: impl Into<Identity>,
     market: &Pubkey,
@@ -297,11 +299,17 @@ pub fn build_cancel_all(
     })
 }
 
-/// Replace the user's entire active order set in one atomic `UpdateBook`.
+/// Replace the user's entire active order set with `orders`.
 ///
-/// Useful for portfolio-style "this is my new desired state" callers.
-/// LO books are anchored at mid 0; the write is an `UpdateBookLimit` (see
-/// [`build_place`]).
+/// Diffs the snapshot against the desired set: levels not in `orders` are
+/// cancelled (under `cancel_mode`), levels in both with a different size are
+/// resized (strict), new levels are placed. Levels already at the desired
+/// size are left alone, so an unchanged book emits no write at all. Useful
+/// for portfolio-style "this is my new desired state" callers.
+///
+/// `placed_ids` lists every order in `orders`, in input order, whether it was
+/// newly placed, resized or untouched.
+#[allow(clippy::too_many_arguments)]
 pub fn build_replace_all(
     owner: impl Into<Identity>,
     market: &Pubkey,
@@ -309,6 +317,7 @@ pub fn build_replace_all(
     orders: &[NewLimitOrder],
     deposit: Option<CollateralArgs>,
     post_only: &PostOnly,
+    cancel_mode: CancelMode,
     config: &MarketConfig,
 ) -> SdkResult<LimitOrderActionResult> {
     let identity = owner.into();
@@ -316,60 +325,43 @@ pub fn build_replace_all(
         return Err(ArcherSDKError::EmptyOrderList);
     }
 
-    let (anchor, current_seq, needs_init) = match current_book {
-        Some(book) => (book.mid_price_ticks, book.last_updated_sequence_number, false),
-        None => (LO_ANCHOR, 0u64, true),
+    let (mut local, current_seq, needs_init) = match current_book {
+        Some(book) => (
+            LocalBook::from_maker_book(book)?,
+            book.last_updated_sequence_number,
+            false,
+        ),
+        None => (LocalBook::empty(), 0u64, true),
     };
 
-    let mut local = LocalBook::new(anchor);
-    let mut placed_ids = Vec::with_capacity(orders.len());
+    let mut desired = Vec::with_capacity(orders.len());
     for new in orders {
-        let (id, size_lots) = resolve_new_order(new, config)?;
-        local.place(id, size_lots)?;
-        placed_ids.push(id);
+        desired.push(resolve_new_order(new, config)?);
     }
+    let ops = local.diff_to(&desired, cancel_mode)?;
+    local.check_not_crossed()?;
+    let placed_ids = desired.iter().map(|(id, _)| *id).collect();
 
-    let next_seq = current_seq + 1;
     let (maker_book_pda, _) = pda::derive_maker_book(market, &identity.maker());
-
     let mut instructions = Vec::with_capacity(3);
     if needs_init {
         instructions.push(create_initialize_maker_book_instruction(
-                identity,
-                *market,
-                crate::onchain::MAKER_KIND_LO,
-            ));
+            identity,
+            *market,
+            crate::onchain::MAKER_KIND_LO,
+        ));
     }
-    if let Some(dep) = deposit {
-        if dep.base_lots > 0 || dep.quote_lots > 0 {
-            instructions.push(create_maker_deposit_funds_instruction(
-                    MakerDepositFundsParams {
-                        base_lots: BaseLots::new(dep.base_lots),
-                        quote_lots: QuoteLots::new(dep.quote_lots),
-                    },
-                    identity,
-                    maker_book_pda,
-                    *market,
-                    config.base_mint,
-                    config.quote_mint,
-                    dep.maker_base_ata,
-                    dep.maker_quote_ata,
-                    config.base_vault,
-                    config.quote_vault,
-                    config.base_token_program,
-                    config.quote_token_program,
-                ));
-        }
-    }
-    instructions.push(update_book_limit_ix(
+    append_deposit(&mut instructions, &identity, market, maker_book_pda, deposit, config);
+
+    let next_seq = push_level_ops(
+        &mut instructions,
         &identity,
-        *market,
+        market,
         maker_book_pda,
-        anchor,
-        next_seq,
-        &local,
         post_only,
-    )?);
+        current_seq,
+        &ops,
+    );
 
     Ok(LimitOrderActionResult {
         instructions,
@@ -468,35 +460,64 @@ pub fn compute_required_collateral(
     Ok((base, quote))
 }
 
-/// LO books are pinned at mid 0 by the program; offsets are absolute prices.
-const LO_ANCHOR: u64 = 0;
-
-/// Render a `LocalBook` to its sorted `MakerLevel` arrays and wrap into an
-/// `UpdateBookLimit` instruction.
-fn update_book_limit_ix(
+/// Append the `UpdateBookLimit`(s) for `ops`, at most [`MAX_LEVEL_OPS`] per
+/// instruction, each with the next sequence number. Returns the last
+/// sequence number written — `current_seq` itself when there are no ops.
+fn push_level_ops(
+    instructions: &mut Vec<Instruction>,
     identity: &Identity,
-    market: Pubkey,
+    market: &Pubkey,
     maker_book_pda: Pubkey,
-    anchor_mid_ticks: u64,
-    sequence_number: u64,
-    local: &LocalBook,
     post_only: &PostOnly,
-) -> SdkResult<Instruction> {
-    let (bid_levels, ask_levels): (Vec<MakerLevel>, Vec<MakerLevel>) = local.to_maker_levels()?;
-    Ok(create_update_book_limit_instruction(
-        identity,
-        market,
-        maker_book_pda,
-        post_only.registry,
-        &post_only.registry_books,
-        post_only.cross_policy as u8,
-        UpdateBookParams {
-            mid_price_ticks: anchor_mid_ticks,
-            bid_levels,
-            ask_levels,
-            sequence_number,
+    current_seq: u64,
+    ops: &[LevelOp],
+) -> u64 {
+    let mut seq = current_seq;
+    for chunk in ops.chunks(MAX_LEVEL_OPS) {
+        seq += 1;
+        instructions.push(create_update_book_limit_instruction(
+            identity,
+            *market,
+            maker_book_pda,
+            post_only.registry,
+            &post_only.registry_books,
+            post_only.cross_policy as u8,
+            seq,
+            chunk,
+        ));
+    }
+    seq
+}
+
+fn append_deposit(
+    instructions: &mut Vec<Instruction>,
+    identity: &Identity,
+    market: &Pubkey,
+    maker_book_pda: Pubkey,
+    deposit: Option<CollateralArgs>,
+    config: &MarketConfig,
+) {
+    let Some(dep) = deposit else { return };
+    if dep.base_lots == 0 && dep.quote_lots == 0 {
+        return;
+    }
+    instructions.push(create_maker_deposit_funds_instruction(
+        MakerDepositFundsParams {
+            base_lots: BaseLots::new(dep.base_lots),
+            quote_lots: QuoteLots::new(dep.quote_lots),
         },
-    ))
+        identity,
+        maker_book_pda,
+        *market,
+        config.base_mint,
+        config.quote_mint,
+        dep.maker_base_ata,
+        dep.maker_quote_ata,
+        config.base_vault,
+        config.quote_vault,
+        config.base_token_program,
+        config.quote_token_program,
+    ));
 }
 
 fn append_withdraw(

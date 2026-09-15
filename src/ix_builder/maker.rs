@@ -10,7 +10,7 @@ use solana_program::instruction::Instruction;
 use solana_program::pubkey::Pubkey;
 
 use crate::onchain::{
-    builders::UpdateBookParams, builders::UpdateMidPriceParams,
+    builders::UpdateBookParams, builders::UpdateMidPriceParams, LevelOp,
     MakerDepositFundsParams, MakerWithdrawFundsParams,
 };
 
@@ -99,16 +99,19 @@ pub fn build_update_book_ix(
         )
 }
 
-/// Build an `UpdateBookLimit` instruction: `UpdateBook` for an LO book with
-/// on-chain post-only enforcement against the market's registered makers.
+/// Build an `UpdateBookLimit` instruction: place, resize or cancel levels on
+/// an LO book with on-chain post-only enforcement against the market's
+/// registered makers.
 ///
 /// `registry_books` must be exactly the registry's maker books (any order)
-/// and `cross_policy` is `0` (reject a cross, error 524) or `1` (allow). The
-/// `book_update` must carry `new_mid_price_ticks == 0`, as every LO book does.
-/// Most callers want [`crate::limit_order::actions`] with a
-/// [`PostOnly`](crate::limit_order::PostOnly) instead of this raw wrapper.
+/// and `cross_policy` is `0` (reject a cross, error 524) or `1` (allow).
+/// `ops` is `1..=32` [`LevelOp`]s; each names an absolute price and the size
+/// the caller last observed there (error 527 if it changed). Most callers
+/// want [`crate::limit_order::actions`], which derive the ops from a book
+/// snapshot, instead of this raw wrapper.
+#[allow(clippy::too_many_arguments)]
 pub fn build_update_book_limit_ix(
-    book_update: &BookUpdate,
+    ops: &[LevelOp],
     market: &Pubkey,
     identity: impl Into<Identity>,
     maker_registry: &Pubkey,
@@ -126,12 +129,8 @@ pub fn build_update_book_limit_ix(
         *maker_registry,
         registry_books,
         cross_policy,
-        UpdateBookParams {
-            mid_price_ticks: book_update.new_mid_price_ticks,
-            bid_levels: book_update.bid_levels.clone(),
-            ask_levels: book_update.ask_levels.clone(),
-            sequence_number,
-        },
+        sequence_number,
+        ops,
     )
 }
 

@@ -325,20 +325,40 @@ pub enum ArcherInstruction {
     /// 12+. `[writable]` maker_book_accounts - MakerBooks to match against
     SwapFromArcherAccount = 35,
 
-    /// Replace the resting levels of a **limit-order (LO)** maker book with
-    /// on-chain post-only enforcement against the market's registered makers.
+    /// Place, resize or cancel individual levels on a **limit-order (LO)**
+    /// maker book, with on-chain post-only enforcement against the market's
+    /// registered makers.
     ///
-    /// Semantically `UpdateBook` plus a check that every level the payload places or grows
-    /// does not cross an *eligible* registered maker at placement: a bid must
-    /// sit strictly below the best registered ask, an ask strictly above the
-    /// best registered bid.
+    /// Unlike `UpdateBook`, this does not replace the level set from a client
+    /// snapshot: only the levels named in the ops change. Each op carries the
+    /// resting size the client last saw; if the level's size differs when the
+    /// instruction lands (a fill got in between), the op fails with
+    /// `LevelSizeMismatch` (527) instead of silently writing the old order
+    /// back. `expected_size == u64::MAX` skips that check.
+    ///
+    /// Post-only: a placed or grown bid must sit strictly below the best
+    /// *eligible* registered ask, and an ask strictly above the best eligible
+    /// registered bid, else `PostOnlyWouldCross` (524) under `Reject`.
+    /// "Eligible" is exactly what the matching engine would fill against; the
+    /// caller's own book is never counted. Cancels and size decreases are
+    /// never rejected. Unregistered LO books are not enumerable on-chain and
+    /// are checked off-chain by the client.
+    ///
+    /// Collateral is recomputed from the resulting level set exactly as
+    /// `UpdateBook` does. Levels stay sorted (bids descending, asks ascending,
+    /// no crossing) and a side holds at most 16 levels (`MakerBookSideFull`, 528).
     ///
     /// Data:
     /// ```text
-    /// [0]         discriminator = 36
-    /// [1]         cross_policy   0 = Reject (error 524 on a cross), 1 = Allow
-    /// [2..538)    UpdateBookData (536 bytes, as for UpdateBook; its byte 0 is
-    ///             ignored; mid_price_ticks must be 0)
+    /// [0]          discriminator = 36
+    /// [1]          cross_policy     0 = Reject, 1 = Allow
+    /// [2..10)      sequence_number  u64 LE (as for UpdateBook)
+    /// [10]         num_ops          u8, 1..=32
+    /// [11..)       num_ops x LevelOp, 25 bytes each:
+    ///                side           u8  (0 = bid, 1 = ask)
+    ///                price_ticks    u64 LE, absolute, > 0
+    ///                expected_size  u64 LE, resting lots (0 = none), u64::MAX = any
+    ///                new_size       u64 LE, lots (0 = cancel)
     /// ```
     ///
     /// Accounts

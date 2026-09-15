@@ -10,10 +10,13 @@
 //! program enforces post-only against the market's registered makers at
 //! placement. `UpdateBook` is the market-maker path.
 //!
-//! Modifying any single order rewrites the whole book on chain — the program
-//! requires `UpdateBook` to carry the complete `[bid_levels; ask_levels]` arrays
-//! — but the API here hides that. Callers think in terms of `place`, `modify`,
-//! `cancel`, `cancel_all`, `replace_all` over individual orders.
+//! Writes are per level: each action diffs the client's snapshot of the book
+//! against its intent and emits one compare-and-set op per touched level
+//! (`LevelOp`), guarded by the size the client observed. A fill that lands in
+//! between fails the instruction (`LevelSizeMismatch`, 527) rather than
+//! silently rewriting the old order; see [`CancelMode`] for the one place the
+//! guard is relaxed. Callers think in terms of `place`, `modify`, `cancel`,
+//! `cancel_all`, `replace_all` over individual orders.
 
 pub mod actions;
 pub mod book;
@@ -22,6 +25,6 @@ pub mod types;
 
 pub use book::LocalBook;
 pub use types::{
-    CrossPolicy, LimitOrder, LimitOrderBookView, LimitOrderId, LimitOrderRung, NewLimitOrder,
-    PostOnly,
+    CancelMode, CrossPolicy, LimitOrder, LimitOrderBookView, LimitOrderId, LimitOrderRung,
+    NewLimitOrder, PostOnly,
 };
