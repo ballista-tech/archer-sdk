@@ -199,6 +199,9 @@ pub enum ArcherError {
     #[error("Maker book side already holds the maximum number of levels")]
     MakerBookSideFull = 528,
 
+    #[error("UpdateBookRescale must be signed by the book's maker, a canonical Archer Vault MakerVault PDA")]
+    InvalidMakerVault = 529,
+
     // 6xx — Fee
     #[error("Invalid maker fee")]
     InvalidFee = 600,

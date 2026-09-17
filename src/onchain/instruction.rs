@@ -378,8 +378,8 @@ pub enum ArcherInstruction {
     UpdateBookLimit = 36,
 
     /// `UpdateBook` for a rescale: replaces the resting levels exactly as
-    /// `UpdateBook` does (same payload, same accounts, same collateral
-    /// recomputation) but leaves `last_updated_sequence_number` and
+    /// `UpdateBook` does (same payload, same collateral recomputation) but
+    /// leaves `last_updated_sequence_number` and
     /// `last_updated_slot` untouched. The payload's sequence field is ignored.
     ///
     /// Meant for the vault: an LP deposit or withdrawal resizes the book's
@@ -387,9 +387,18 @@ pub enum ArcherInstruction {
     /// nor a sign of life, so it must not advance the maker's sequence or
     /// extend the expiry window.
     ///
+    /// Because it skips sequence validation it is NOT open to whoever may
+    /// quote the book. The signer must be `maker_book.maker` itself (never a
+    /// delegate), owned by `ARCHER_VAULT_PROGRAM_ID`, and the canonical
+    /// `MakerVault` PDA for this book — `InvalidMakerVault` (529) otherwise.
+    /// Wallet- and ArcherAccount-owned books cannot be rescaled.
+    ///
     /// Data: the raw 536-byte `UpdateBookData`, byte 0 = 37.
     ///
-    /// Accounts: as `UpdateBook`.
+    /// Accounts
+    /// 0. `[signer]`   maker_account      - maker_book.maker: the book's MakerVault PDA
+    /// 1. `[writable]` maker_book_account - MakerBook PDA
+    /// 2. `[]`         market_account     - Must equal maker_book.market
     UpdateBookRescale = 37,
 }
 

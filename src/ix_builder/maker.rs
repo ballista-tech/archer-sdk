@@ -136,7 +136,8 @@ pub fn build_update_book_limit_ix(
 
 /// Build an `UpdateBookRescale` instruction: the book's levels replaced from
 /// `book_update` without advancing the sequence number or refreshing the
-/// expiry window. This is what the vault sends on LP flows; a maker quoting
+/// expiry window. This is what the vault sends on LP flows, and the program
+/// accepts it from nobody else (`InvalidMakerVault`, 529): a maker quoting
 /// wants [`build_update_book_ix`].
 pub fn build_update_book_rescale_ix(
     book_update: &BookUpdate,

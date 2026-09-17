@@ -1535,14 +1535,18 @@
         "orders pro rata, which is neither a new quote nor a sign of life, so it must not advance",
         "the maker's sequence or extend the expiry window.",
         "",
-        "Data: the raw 536-byte UpdateBookData, byte 0 = 37. Accounts: as UpdateBook."
+        "Vault only: the signer must be makerBook.maker itself (never a delegate), owned by the",
+        "Archer Vault program, and the canonical MakerVault PDA for this book (InvalidMakerVault,",
+        "529, otherwise). Wallet- and ArcherAccount-owned books cannot be rescaled.",
+        "",
+        "Data: the raw 536-byte UpdateBookData, byte 0 = 37."
       ],
       "accounts": [
         {
           "name": "makerAccount",
           "isMut": false,
           "isSigner": true,
-          "desc": "Book maker or book delegate; for an ArcherAccount book, its owner or delegate"
+          "desc": "makerBook.maker: the book's MakerVault PDA, signed for by the Archer Vault program"
         },
         {
           "name": "makerBookAccount",
@@ -1555,13 +1559,6 @@
           "isMut": false,
           "isSigner": false,
           "desc": "Market state account; must equal makerBook.market"
-        },
-        {
-          "name": "archerAccount",
-          "isMut": false,
-          "isSigner": false,
-          "isOptional": true,
-          "desc": "OPTIONAL. The book's ArcherAccount PDA, read to authorize the signer. REQUIRED iff makerBook.makerIsArcherAccount == 1; must be omitted otherwise."
         }
       ],
       "args": [
@@ -3175,6 +3172,11 @@
       "code": 528,
       "name": "MakerBookSideFull",
       "msg": "Maker book side already holds the maximum number of levels"
+    },
+    {
+      "code": 529,
+      "name": "InvalidMakerVault",
+      "msg": "UpdateBookRescale must be signed by the book's maker, a canonical Archer Vault MakerVault PDA"
     },
     {
       "code": 600,

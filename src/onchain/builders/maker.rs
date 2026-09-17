@@ -207,6 +207,10 @@ pub fn encode_update_book_data(params: &UpdateBookParams) -> Vec<u8> {
 /// `UpdateBookRescale` (37): `UpdateBook`'s payload and accounts, with the
 /// book's sequence number and last-updated slot left untouched. The sequence
 /// in `params` is ignored by the program.
+///
+/// Vault only: the program rejects any signer that is not the book's maker
+/// and a canonical `MakerVault` PDA (`InvalidMakerVault`, 529), so this is
+/// only usable from the vault program's CPI.
 pub fn create_update_book_rescale_instruction(
     maker: impl Into<MakerIdentity>,
     market: Pubkey,
