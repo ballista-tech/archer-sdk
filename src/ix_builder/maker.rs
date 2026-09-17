@@ -134,6 +134,31 @@ pub fn build_update_book_limit_ix(
     )
 }
 
+/// Build an `UpdateBookRescale` instruction: the book's levels replaced from
+/// `book_update` without advancing the sequence number or refreshing the
+/// expiry window. This is what the vault sends on LP flows; a maker quoting
+/// wants [`build_update_book_ix`].
+pub fn build_update_book_rescale_ix(
+    book_update: &BookUpdate,
+    market: &Pubkey,
+    identity: impl Into<Identity>,
+) -> Instruction {
+    let identity = identity.into();
+    let (maker_book_pda, _) = crate::pda::derive_maker_book(market, &identity.maker());
+
+    crate::onchain::builders::create_update_book_rescale_instruction(
+        identity,
+        *market,
+        maker_book_pda,
+        UpdateBookParams {
+            mid_price_ticks: book_update.new_mid_price_ticks,
+            bid_levels: book_update.bid_levels.clone(),
+            ask_levels: book_update.ask_levels.clone(),
+            sequence_number: 0,
+        },
+    )
+}
+
 /// Build an UpdateMidPrice instruction.
 pub fn build_update_mid_price_ix(
     market: &Pubkey,

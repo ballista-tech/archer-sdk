@@ -204,6 +204,20 @@ pub fn encode_update_book_data(params: &UpdateBookParams) -> Vec<u8> {
     data
 }
 
+/// `UpdateBookRescale` (37): `UpdateBook`'s payload and accounts, with the
+/// book's sequence number and last-updated slot left untouched. The sequence
+/// in `params` is ignored by the program.
+pub fn create_update_book_rescale_instruction(
+    maker: impl Into<MakerIdentity>,
+    market: Pubkey,
+    maker_book: Pubkey,
+    params: UpdateBookParams,
+) -> Instruction {
+    let mut ix = create_update_book_instruction(maker, market, maker_book, params);
+    ix.data[0] = ArcherInstruction::UpdateBookRescale as u8;
+    ix
+}
+
 pub fn create_update_book_instruction(
     maker: impl Into<MakerIdentity>,
     market: Pubkey,

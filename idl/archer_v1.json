@@ -1532,6 +1532,58 @@
         "type": "u8",
         "value": 36
       }
+    },
+    {
+      "name": "UpdateBookRescale",
+      "docs": [
+        "UpdateBook for a rescale: replaces the resting levels exactly as UpdateBook does (same",
+        "payload, same accounts, same collateral recomputation) but leaves",
+        "lastUpdatedSequenceNumber and lastUpdatedSlot untouched. The payload's sequence field",
+        "is ignored. Meant for the vault: an LP deposit or withdrawal resizes the book's resting",
+        "orders pro rata, which is neither a new quote nor a sign of life, so it must not advance",
+        "the maker's sequence or extend the expiry window.",
+        "",
+        "Data: the raw 536-byte UpdateBookData, byte 0 = 37. Accounts: as UpdateBook."
+      ],
+      "accounts": [
+        {
+          "name": "makerAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "Book maker or book delegate; for an ArcherAccount book, its owner or delegate"
+        },
+        {
+          "name": "makerBookAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "MakerBook PDA"
+        },
+        {
+          "name": "marketAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Market state account; must equal makerBook.market"
+        },
+        {
+          "name": "archerAccount",
+          "isMut": false,
+          "isSigner": false,
+          "isOptional": true,
+          "desc": "OPTIONAL. The book's ArcherAccount PDA, read to authorize the signer. REQUIRED iff makerBook.makerIsArcherAccount == 1; must be omitted otherwise."
+        }
+      ],
+      "args": [
+        {
+          "name": "updateBookData",
+          "type": {
+            "defined": "UpdateBookData"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 37
+      }
     }
   ],
   "accounts": [

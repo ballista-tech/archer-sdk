@@ -377,6 +377,20 @@ pub enum ArcherInstruction {
     ///                                        cross policies.
     UpdateBookLimit = 36,
 
+    /// `UpdateBook` for a rescale: replaces the resting levels exactly as
+    /// `UpdateBook` does (same payload, same accounts, same collateral
+    /// recomputation) but leaves `last_updated_sequence_number` and
+    /// `last_updated_slot` untouched. The payload's sequence field is ignored.
+    ///
+    /// Meant for the vault: an LP deposit or withdrawal resizes the book's
+    /// resting orders pro rata, which is neither a new quote from the maker
+    /// nor a sign of life, so it must not advance the maker's sequence or
+    /// extend the expiry window.
+    ///
+    /// Data: the raw 536-byte `UpdateBookData`, byte 0 = 37.
+    ///
+    /// Accounts: as `UpdateBook`.
+    UpdateBookRescale = 37,
 }
 
 impl ArcherInstruction {
