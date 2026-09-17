@@ -869,11 +869,7 @@
         "REMAINING ACCOUNTS - not expressible positionally in this IDL. Append them to",
         "`keys` after the fixed accounts, in this order:",
         "  [writable] makerBookAccounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (64) MakerBook PDAs to match against. At least one is required; each must be writable and program-owned; duplicates are rejected.",
-        "  [] eventAuthority - OPTIONAL, must be LAST if present: Fzo6R5MrDSComspzpQNiieGaYVpNksqeLC27CKTPMTm1. When supplied, SyncFillEvent is emitted via a self-CPI instead of sol_log_data. MakerFillEvent always uses sol_log_data.",
-        "",
-        "BACKWARD COMPAT: legacy callers may still pass the instructions sysvar between",
-        "quoteTokenProgram and the first maker book; the program detects and skips it.",
-        "New callers must omit it."
+        "  [] eventAuthority - OPTIONAL, must be LAST if present: Fzo6R5MrDSComspzpQNiieGaYVpNksqeLC27CKTPMTm1. When supplied, SyncFillEvent is emitted via a self-CPI instead of sol_log_data. MakerFillEvent always uses sol_log_data."
       ],
       "accounts": [
         {
@@ -1349,11 +1345,7 @@
         "REMAINING ACCOUNTS - not expressible positionally in this IDL. Append them to",
         "`keys` after the fixed accounts, in this order:",
         "  [writable] makerBookAccounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (64) MakerBook PDAs to match against. At least one is required; each must be writable and program-owned; duplicates are rejected.",
-        "  [] eventAuthority - OPTIONAL, must be LAST if present: Fzo6R5MrDSComspzpQNiieGaYVpNksqeLC27CKTPMTm1. When supplied, SyncFillEvent is emitted via a self-CPI instead of sol_log_data. MakerFillEvent always uses sol_log_data.",
-        "",
-        "BACKWARD COMPAT: legacy callers may still pass the instructions sysvar between",
-        "quoteTokenProgram and the first maker book; the program detects and skips it.",
-        "New callers must omit it."
+        "  [] eventAuthority - OPTIONAL, must be LAST if present: Fzo6R5MrDSComspzpQNiieGaYVpNksqeLC27CKTPMTm1. When supplied, SyncFillEvent is emitted via a self-CPI instead of sol_log_data. MakerFillEvent always uses sol_log_data."
       ],
       "accounts": [
         {
