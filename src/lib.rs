@@ -71,6 +71,7 @@ pub mod prelude {
         LocalBook, NewLimitOrder, PostOnly,
     };
     pub use crate::math::{
+        engine,
         fees::{effective_taker_price, estimate_taker_fees, TakerFees},
         levels::build_book_from_spread,
         levels::build_book_update,

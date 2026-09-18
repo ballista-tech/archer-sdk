@@ -86,6 +86,24 @@ let effective = fees::effective_taker_price(148.50, &config);
 let margin    = fees::estimate_required_quote_margin(&quotes, &config)?;
 ```
 
+Those are estimates. When you need the exact integers the program will settle
+at (for building things such as a fill simulator, an aggregator adapter, a solvency check), use `math::engine`:
+
+```rust
+use archer_sdk::math::engine;
+use archer_sdk::Side;
+
+let quote_lots = engine::base_to_quote_lots(&header, base_lots, price_ticks, Side::Bid)?;
+let base_lots  = engine::quote_to_base_lots(&header, quote_lots, price_ticks, false)?;
+let fee_lots   = engine::calculate_fee(quote_lots, header.taker_fee_ppm)?;
+let budget     = engine::max_amount_in_bid_budget(quote_lots, header.taker_fee_ppm, builder_fee_ppm)?;
+```
+
+The same goes for deciding which books the engine will actually fill against:
+`MakerBook::is_auction_eligible(slot, maker_fee_ppm)` applies the aggregator's
+three per-book skips (status, staleness, unfundable deferred rebalance), so a
+quoter filtering with it shows exactly the liquidity the program sees.
+
 ---
 
 ## Reading state

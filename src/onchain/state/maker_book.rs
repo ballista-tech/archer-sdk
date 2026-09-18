@@ -499,6 +499,20 @@ impl MakerBook {
             && current_slot.saturating_sub(self.last_updated_slot) >= self.expiry_in_slots
     }
 
+    /// Whether the matching engine would consider this book in an auction at
+    /// `current_slot`: an active status, not stale, and able to fund any
+    /// deferred rebalance. These are the three per-book skips the aggregator
+    /// applies, in the same order, so a quoter that filters with this shows
+    /// exactly the liquidity the program will fill.
+    #[inline]
+    pub fn is_auction_eligible(&self, current_slot: u64, maker_fee_ppm: i32) -> bool {
+        self.get_status()
+            .map(|s| s.can_participate_in_auction())
+            .unwrap_or(false)
+            && !self.is_stale(current_slot)
+            && self.is_quote_sync_fundable(maker_fee_ppm)
+    }
+
     #[inline(always)]
     pub fn best_bid_price(&self) -> Option<u64> {
         if self.bid_levels[0].is_active() {
@@ -544,3 +558,53 @@ impl MakerBook {
     }
 }
 
+#[cfg(test)]
+mod auction_eligibility_tests {
+    use super::*;
+    use bytemuck::Zeroable;
+
+    fn active_book() -> MakerBook {
+        let mut b = MakerBook::zeroed();
+        b.status = MakerBookStatus::Active as u8;
+        b
+    }
+
+    #[test]
+    fn active_unexpired_synced_book_is_eligible() {
+        assert!(active_book().is_auction_eligible(100, 0));
+    }
+
+    #[test]
+    fn suspended_book_is_skipped() {
+        let mut b = active_book();
+        b.status = MakerBookStatus::Suspended as u8;
+        assert!(!b.is_auction_eligible(100, 0));
+    }
+
+    #[test]
+    fn expiry_boundary_matches_the_aggregator() {
+        let mut b = active_book();
+        b.last_updated_slot = 100;
+        b.expiry_in_slots = 10;
+        // Skipped once slots-since-update *reaches* expiry, not after.
+        assert!(b.is_auction_eligible(109, 0));
+        assert!(!b.is_auction_eligible(110, 0));
+    }
+
+    #[test]
+    fn unfundable_deferred_reprice_is_skipped() {
+        // Mid moved since the last sync with no quote at all behind the bids,
+        // so the projected reserve cannot be met.
+        let mut b = active_book();
+        b.mid_price_ticks = 200;
+        b.mid_at_last_sync = 100;
+        b.bid_levels[0] = MakerLevel {
+            size_in_base_lots: BaseLots::new(1),
+            price_offset_ticks: -1,
+        };
+        b.tick_conversion_num = 1;
+        b.tick_conversion_den = 1;
+        assert!(!b.is_quote_sync_fundable(0));
+        assert!(!b.is_auction_eligible(0, 0));
+    }
+}
