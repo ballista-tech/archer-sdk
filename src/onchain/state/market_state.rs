@@ -11,7 +11,7 @@ pub const MARKET_STATE_DISCRIMINATOR: &[u8; 8] = b"ACHRMKT1";
 pub const MARKET_SEED_PREFIX: &[u8] = b"market";
 
 pub const ARCHER_EXCHANGE_TREASURY: Pubkey =
-    solana_program::pubkey!("ELGWUVJD6NBNLyJ5Xv98PzoSg9Wh2Y8Bwep9JZgm9nuo");
+    solana_program::pubkey!("Hfj4HDxLqdj4k9FB3eZeURf4sZtu3w9aJMRfctmXR66P");
 pub const ARCHER_PROTOCOL_FEE_PPM: u64 = 200_000;
 
 pub const MIN_FEE_PPM: i32 = -50_000;

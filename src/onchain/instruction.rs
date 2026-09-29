@@ -180,7 +180,7 @@ pub enum ArcherInstruction {
     /// 2. `[]` quote_mint - The quote token mint
     /// 3. `[]` quote_vault_account - The market's quote token vault
     /// 4. `[writable]` admin_quote_token_account - The admin's token account for quote token
-    /// 5. `[]` archer_treasury - Archer Exchange's treasury account. Must be: ELGWUVJD6NBNLyJ5Xv98PzoSg9Wh2Y8Bwep9JZgm9nuo
+    /// 5. `[]` archer_treasury - Archer Exchange's treasury account. Must be: Hfj4HDxLqdj4k9FB3eZeURf4sZtu3w9aJMRfctmXR66P
     /// 6.  `[writable]` treasury_quote_token_account - The treasury's token account for quote token
     /// 7. `[]` token_program - SPL token program
     CollectProtocolFee = 14,

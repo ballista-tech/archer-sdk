@@ -823,7 +823,7 @@
           "name": "archerTreasury",
           "isMut": false,
           "isSigner": false,
-          "desc": "Archer Exchange treasury: ELGWUVJD6NBNLyJ5Xv98PzoSg9Wh2Y8Bwep9JZgm9nuo"
+          "desc": "Archer Exchange treasury: Hfj4HDxLqdj4k9FB3eZeURf4sZtu3w9aJMRfctmXR66P"
         },
         {
           "name": "treasuryQuoteTokenAccount",
@@ -3381,7 +3381,7 @@
     {
       "name": "ARCHER_EXCHANGE_TREASURY",
       "type": "publicKey",
-      "value": "ELGWUVJD6NBNLyJ5Xv98PzoSg9Wh2Y8Bwep9JZgm9nuo"
+      "value": "Hfj4HDxLqdj4k9FB3eZeURf4sZtu3w9aJMRfctmXR66P"
     },
     {
       "name": "ARCHER_GLOBAL_AUTHORITY",
