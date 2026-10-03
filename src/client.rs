@@ -9,12 +9,13 @@ use std::sync::RwLock;
 use crate::onchain::{MakerBook as MakerBookProgram, Side, MAKER_BOOK_DISCRIMINATOR};
 use solana_client::client_error::ClientErrorKind;
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_client::rpc_config::RpcProgramAccountsConfig;
+use solana_account_decoder_client_types::UiAccountEncoding;
+use solana_client::rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
 use solana_client::rpc_filter::{Memcmp, RpcFilterType};
 use solana_client::rpc_request::RpcError;
 use solana_program::instruction::Instruction;
 use solana_program::pubkey::Pubkey;
-use solana_sdk::commitment_config::CommitmentConfig;
+use solana_commitment_config::CommitmentConfig;
 
 use crate::accounts::{self, MakerBalances};
 use crate::config::MarketConfig;
@@ -262,18 +263,25 @@ impl ArcherClient {
 
         let config = RpcProgramAccountsConfig {
             filters: Some(filters),
+            account_config: RpcAccountInfoConfig {
+                encoding: Some(UiAccountEncoding::Base64),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
         let accounts = self
             .rpc
-            .get_program_accounts_with_config(&ARCHER_V1_PROGRAM_ID, config)
+            .get_program_ui_accounts_with_config(&ARCHER_V1_PROGRAM_ID, config)
             .await
             .map_err(ArcherSDKError::RpcError)?;
 
         let mut books = Vec::with_capacity(accounts.len());
         for (pubkey, account) in accounts {
-            if let Ok(book) = accounts::parse_maker_book(&account.data) {
+            let Some(data) = account.data.decode() else {
+                continue;
+            };
+            if let Ok(book) = accounts::parse_maker_book(&data) {
                 books.push((pubkey, *book));
             }
         }
@@ -660,18 +668,25 @@ impl ArcherClient {
 
         let cfg = RpcProgramAccountsConfig {
             filters: Some(filters),
+            account_config: RpcAccountInfoConfig {
+                encoding: Some(UiAccountEncoding::Base64),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
         let accounts = self
             .rpc
-            .get_program_accounts_with_config(&ARCHER_V1_PROGRAM_ID, cfg)
+            .get_program_ui_accounts_with_config(&ARCHER_V1_PROGRAM_ID, cfg)
             .await
             .map_err(ArcherSDKError::RpcError)?;
 
         let mut out = Vec::with_capacity(accounts.len());
         for (pk, acc) in accounts {
-            if let Ok(book) = accounts::parse_maker_book(&acc.data) {
+            let Some(data) = acc.data.decode() else {
+                continue;
+            };
+            if let Ok(book) = accounts::parse_maker_book(&data) {
                 out.push((pk, *book));
             }
         }

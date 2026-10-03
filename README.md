@@ -9,10 +9,10 @@ against its liquidity, and run a market-making book.
 
 ```toml
 [dependencies]
-archer-sdk = "0.0.1"
+archer-sdk = "0.2"
 
 # with an async RPC client:
-archer-sdk = { version = "0.0.1", features = ["client"] }
+archer-sdk = { version = "0.2", features = ["client"] }
 ```
 
 > **Note — this release targets an unreleased program version.**

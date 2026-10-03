@@ -36,7 +36,7 @@ pub fn create_initialize_market_instruction(
             AccountMeta::new(base_vault, false),
             AccountMeta::new(quote_vault, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(solana_program::system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(params.base_token_program, false),
             AccountMeta::new_readonly(params.quote_token_program, false),
             AccountMeta::new_readonly(spl_associated_token_account::ID, false),

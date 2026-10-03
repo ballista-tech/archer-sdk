@@ -1,8 +1,8 @@
 use solana_program::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
-    system_program,
 };
+use solana_system_interface::program as system_program;
 
 use crate::onchain::{
     ArcherAccountWithdrawParams, ArcherInstruction, DelegatedPlatform,

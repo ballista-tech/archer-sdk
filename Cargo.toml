@@ -1,6 +1,6 @@
 [package]
 name = "archer-sdk"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Rust SDK for the Archer Protocol — account layouts, instruction builders and quoting math"
 license = "Apache-2.0"
@@ -10,24 +10,31 @@ categories = ["cryptography::cryptocurrencies"]
 
 [features]
 default = []
-client = ["dep:solana-client", "dep:solana-sdk", "dep:tokio"]
+client = [
+    "dep:solana-client",
+    "dep:solana-commitment-config",
+    "dep:solana-account-decoder-client-types",
+    "dep:tokio",
+]
 
 [dependencies]
-solana-program = "2.2"
+solana-program = "5"
+solana-system-interface = { version = "3", features = ["bincode"] }
 borsh = "1.5.7"
 bytemuck = { version = "1.24.0", features = ["derive"] }
 num_enum = "0.5.9"
 thiserror = "1.0.38"
-spl-associated-token-account = { version = "6.0.0", features = ["no-entrypoint"] }
-spl-token = { version = "8.0.0", features = ["no-entrypoint"] }
-spl-token-2022 = { version = "8.0.0", features = ["no-entrypoint"] }
+spl-associated-token-account = { version = "8", features = ["no-entrypoint"] }
+spl-token = { version = "9", features = ["no-entrypoint"] }
 
-solana-client = { version = "2.2", optional = true }
-solana-sdk = { version = "2.2", optional = true }
+solana-client = { version = "4", optional = true }
+solana-commitment-config = { version = "3", optional = true }
+solana-account-decoder-client-types = { version = "4", optional = true }
 tokio = { version = "1.40", features = ["full"], optional = true }
 
 [dev-dependencies]
-solana-sdk = "2.2"
+base64 = "0.22"
+serde_json = "1"
 
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(kani)'] }

@@ -20,9 +20,45 @@ Each release also states the Solana crate versions it is built against, since
 `Pubkey` and `Instruction` in the public API come from them and must match the
 ones in your own dependency tree.
 
-## [Unreleased]
+## [0.2.0] - 2026-10-03
 
-Changes merged to `main` that are not in a release yet.
+Moves the SDK to the current Solana crates. The SDK's own API, the account
+layouts and every instruction it builds are unchanged; what changes is the
+version of the Solana types in its public API.
+
+**Built against:** `solana-program` 5, `solana-system-interface` 3,
+`spl-token` 9, `spl-associated-token-account` 8, and with the `client`
+feature `solana-client` 4 (Agave 4.3) and `solana-commitment-config` 3.
+
+### New
+
+- **Offline tests for the `client` feature** (`tests/client.rs`). They run
+  `ArcherClient` against a local JSON-RPC stub, so the RPC request and
+  response shapes are checked without a network. Run them with
+  `cargo test --features client`.
+
+### Breaking
+
+- **Solana crates moved from 2.x to the current majors.** `Pubkey` and
+  `Instruction` in the SDK's API are now the types from `solana-program` 5
+  (`solana-pubkey` 4, `solana-instruction` 4). A project still on the Solana
+  2.x crates gets type-mismatch errors wherever SDK values meet its own Solana
+  code. To migrate, move your own `solana-*` and `spl-*` dependencies to the
+  versions listed above, then change `archer-sdk` to `"0.2"`.
+- **Minimum Rust version raised.** The default build needs Rust 1.89. The
+  `client` feature needs Rust 1.97.1, which `solana-client` 4.3 requires.
+- **`ArcherClient::with_commitment` takes `CommitmentConfig` from
+  `solana-commitment-config`.** `solana-sdk` 5 no longer exports it. Import
+  it as `solana_commitment_config::CommitmentConfig`.
+- **`spl-token-2022` and `solana-sdk` are no longer dependencies.** The SDK
+  never used the first, and used the second only for `CommitmentConfig`. If
+  you relied on either arriving transitively, add it to your own `Cargo.toml`.
+
+### Fixes
+
+- **Maker-book scans request base64 explicitly.** `get_all_maker_books` and
+  the limit-order ladder scan now ask `getProgramAccounts` for base64 account
+  data and decode it themselves, as `solana-client` 4 no longer does this.
 
 ## [0.1.0] - 2026-10-03
 
@@ -70,6 +106,3 @@ you pinned to that tag, this release differs from it:
 - `append_authority` is removed.
 - `UpdateBookRescale` and `MarketStatus::Frozen` are added.
 - The Archer fee treasury address is updated.
-
-[Unreleased]: https://github.com/ballista-tech/archer-sdk/compare/0.1.0...HEAD
-[0.1.0]: https://github.com/ballista-tech/archer-sdk/releases/tag/0.1.0

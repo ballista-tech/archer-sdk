@@ -17,7 +17,8 @@
 
 use crate::onchain::MAX_BUILDER_FEE_PPM;
 use crate::onchain::state::{ArcherAccount, DelegatedPlatform, MakerBook};
-use solana_program::{instruction::Instruction, pubkey::Pubkey, system_instruction};
+use solana_program::{instruction::Instruction, pubkey::Pubkey};
+use solana_system_interface::instruction as system_instruction;
 
 use crate::error::{ArcherSDKError, SdkResult};
 use crate::pda::derive_archer_account;
