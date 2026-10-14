@@ -86,6 +86,12 @@ impl LevelOp {
         self.new_size == 0
     }
 
+    #[inline]
+    pub fn may_place_or_grow(&self) -> bool {
+        self.new_size > 0
+            && (self.expected_size == LEVEL_OP_EXPECTED_ANY || self.new_size > self.expected_size)
+    }
+
     pub fn decode(bytes: &[u8]) -> Result<Self, ProgramError> {
         if bytes.len() < LEVEL_OP_SIZE {
             return Err(ProgramError::InvalidInstructionData);
@@ -113,6 +119,10 @@ impl LevelOp {
         out[17..25].copy_from_slice(&self.new_size.to_le_bytes());
         out
     }
+}
+
+pub fn level_ops_may_seat(ops: &[LevelOp]) -> bool {
+    ops.iter().any(LevelOp::may_place_or_grow)
 }
 
 /// Encode a full `UpdateBookLimit` payload: `[36, cross_policy, seq u64 LE,

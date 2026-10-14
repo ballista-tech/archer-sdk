@@ -93,8 +93,12 @@ pub enum ArcherInstruction {
     /// 3. `[]` system_program - System program
     InitializeMakerBook = 6,
 
-    /// Updates the order book levels for a market maker
-    /// 
+    /// Replace the resting bid/ask levels of a market-maker (MM) book.
+    ///
+    /// Rejected for limit-order (LO) books with
+    /// `LimitOrderBookRequiresUpdateBookLimit` (531): those are written with
+    /// `UpdateBookLimit`.
+    ///
     /// Accounts
     /// 0. `[signer]` maker_account - Market maker pubkey (or the delegate pubkey)
     /// 1. `[writable]` maker_book_account - The MakerBook PDA
@@ -205,7 +209,7 @@ pub enum ArcherInstruction {
     /// 8. `[writable]` taker_quote_token_account - Taker's quote token account
     /// 9. `[]` base_token_program - Base token program
     /// 10. `[]` quote_token_program - Quote token program
-    /// 11..N. `[writable]` maker_book_accounts - MakerBook PDAs to match against
+    /// 11..N. `[writable]` maker_book_accounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (48) MakerBook PDAs to match against; duplicates are rejected
     ///
     /// Backward-compat: legacy callers may still pass an instructions sysvar
     /// account between `quote_token_program` and the first maker book. The
@@ -214,7 +218,8 @@ pub enum ArcherInstruction {
 
     /// Initialize a maker registry for a market
     ///
-    /// Creates a MakerRegistry PDA that tracks all registered maker books.
+    /// Creates the market's MakerRegistry PDA (2128 bytes, seating up to
+    /// `MAX_SEATED_MAKERS` = 48 books).
     /// ARCHER_GLOBAL_AUTHORITY only, on any market; it also pays the rent.
     ///
     /// Accounts
@@ -227,6 +232,8 @@ pub enum ArcherInstruction {
     /// Register a maker book in the registry
     ///
     /// Adds a maker book to the market's registry. ARCHER_GLOBAL_AUTHORITY only.
+    /// Fails if the registry is full (48) or the book is already registered.
+    /// Increments the registry version.
     ///
     /// Accounts
     /// 0. `[signer]` admin_account - ARCHER_GLOBAL_AUTHORITY
@@ -238,6 +245,7 @@ pub enum ArcherInstruction {
     /// Deregister a maker book from the registry
     ///
     /// Removes a maker book from the market's registry. ARCHER_GLOBAL_AUTHORITY only.
+    /// Fails if the book is not registered. Increments the registry version.
     ///
     /// Accounts
     /// 0. `[signer]` admin_account - ARCHER_GLOBAL_AUTHORITY
@@ -322,15 +330,16 @@ pub enum ArcherInstruction {
     /// 9. `[writable]` taker_quote_token_account - Quote token account owned by the ArcherAccount
     /// 10. `[]` base_token_program - Base token program
     /// 11. `[]` quote_token_program - Quote token program
-    /// 12+. `[writable]` maker_book_accounts - MakerBooks to match against
+    /// 12+. `[writable]` maker_book_accounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (48) MakerBooks to match against; duplicates are rejected
     SwapFromArcherAccount = 35,
 
     /// Place, resize or cancel individual levels on a **limit-order (LO)**
     /// maker book, with on-chain post-only enforcement against the market's
     /// registered makers.
     ///
-    /// Unlike `UpdateBook`, this does not replace the level set from a client
-    /// snapshot: only the levels named in the ops change. Each op carries the
+    /// This is the only instruction that changes an LO book's levels (besides
+    /// `ClearBook`). Unlike `UpdateBook`, it does not replace the level set
+    /// from a client snapshot: only the levels named in the ops change. Each op carries the
     /// resting size the client last saw; if the level's size differs when the
     /// instruction lands (a fill got in between), the op fails with
     /// `LevelSizeMismatch` (527) instead of silently writing the old order
@@ -343,6 +352,22 @@ pub enum ArcherInstruction {
     /// caller's own book is never counted. Cancels and size decreases are
     /// never rejected. Unregistered LO books are not enumerable on-chain and
     /// are checked off-chain by the client.
+    ///
+    /// Registry seating: a call that places or grows a level also seats the
+    /// book in the registry if it is not seated yet, so aggregators can route
+    /// to it from the same slot. It takes, in order of preference: a free
+    /// slot (below `MAX_SEATED_MAKERS`); the seat of a closed book; the seat
+    /// of a dead LO book (suspended, expired, unfundable or empty on both
+    /// sides); the seat of the live LO book it beats by the most. It beats a
+    /// seat when it is strictly better on every side both rest on, and that
+    /// seat is not the registry's only best price on a side the placing book
+    /// does not quote. An MM book is never displaced, dead or alive: MM seats
+    /// are managed by the global authority. A change increments the registry
+    /// version and emits `RegistrySeatEvent`.
+    ///
+    /// A call with no placing or growing op (cancels and reductions only)
+    /// never reads the registry books: they may be omitted and the registry
+    /// passed read-only.
     ///
     /// Collateral is recomputed from the resulting level set exactly as
     /// `UpdateBook` does. Levels stay sorted (bids descending, asks ascending,
@@ -366,15 +391,15 @@ pub enum ArcherInstruction {
     ///                                        its owner or delegate
     /// 1. `[writable]`  maker_book_account  - LO MakerBook PDA
     /// 2. `[]`          market_account      - Must equal maker_book.market
-    /// 3. `[]`          maker_registry      - The market's MakerRegistry
+    /// 3. `[writable]`  maker_registry      - The market's MakerRegistry; writable when any op places or grows a level (`AccountNotWritable`, 201, otherwise)
     /// 4. `[]` optional archer_account      - The book's ArcherAccount PDA.
     ///                                        REQUIRED iff maker_book.maker_is_archer_account == 1;
     ///                                        must be omitted otherwise.
     /// Then, in order:
     /// N..  `[]`        registry books      - Exactly maker_registry.num_makers MakerBook accounts,
-    ///                                        each registry entry once, in any order
-    ///                                        (error 525 otherwise). Required for both
-    ///                                        cross policies.
+    ///                                        each registry entry once, in any order (error 525
+    ///                                        otherwise). Required, under both cross policies,
+    ///                                        when any op places or grows a level; else ignored.
     UpdateBookLimit = 36,
 
     /// `UpdateBook` for a rescale: replaces the resting levels exactly as
@@ -391,7 +416,8 @@ pub enum ArcherInstruction {
     /// quote the book. The signer must be `maker_book.maker` itself (never a
     /// delegate), owned by `ARCHER_VAULT_PROGRAM_ID`, and the canonical
     /// `MakerVault` PDA for this book — `InvalidMakerVault` (529) otherwise.
-    /// Wallet- and ArcherAccount-owned books cannot be rescaled.
+    /// Wallet- and ArcherAccount-owned books cannot be rescaled, and LO books
+    /// are rejected as in `UpdateBook`.
     ///
     /// Data: the raw 536-byte `UpdateBookData`, byte 0 = 37.
     ///
@@ -400,6 +426,29 @@ pub enum ArcherInstruction {
     /// 1. `[writable]` maker_book_account - MakerBook PDA
     /// 2. `[]`         market_account     - Must equal maker_book.market
     UpdateBookRescale = 37,
+
+    /// Replace the registry's whole maker set in one call.
+    ///
+    /// `ARCHER_GLOBAL_AUTHORITY` only, on any market. Compare-and-set: fails
+    /// with `RegistryVersionMismatch` (530) unless `expected_version` equals
+    /// the registry's current version,
+    /// so a set computed from stale state never overwrites a book that seated
+    /// itself in the meantime. Increments the version.
+    ///
+    /// Every book must be a MakerBook of this market; duplicates are rejected
+    /// and at most `MAX_SEATED_MAKERS` (48) may be passed. Passing none empties
+    /// the registry.
+    ///
+    /// Data: `expected_version` u32 LE.
+    ///
+    /// Accounts
+    /// 0. `[signer]`   admin_account    - ARCHER_GLOBAL_AUTHORITY
+    /// 1. `[]`         market_account   - Market state account
+    /// 2. `[writable]` registry_account - MakerRegistry PDA
+    ///
+    /// Then, in seat order:
+    /// 3..  `[]`       maker books      - The new maker set
+    UpdateRegistry = 38,
 }
 
 impl ArcherInstruction {

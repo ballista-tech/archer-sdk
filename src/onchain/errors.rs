@@ -202,6 +202,12 @@ pub enum ArcherError {
     #[error("UpdateBookRescale must be signed by the book's maker, a canonical Archer Vault MakerVault PDA")]
     InvalidMakerVault = 529,
 
+    #[error("Registry changed since the expected version was read; refetch and retry")]
+    RegistryVersionMismatch = 530,
+
+    #[error("Limit-order (LO) maker books are written with UpdateBookLimit, not UpdateBook")]
+    LimitOrderBookRequiresUpdateBookLimit = 531,
+
     // 6xx — Fee
     #[error("Invalid maker fee")]
     InvalidFee = 600,

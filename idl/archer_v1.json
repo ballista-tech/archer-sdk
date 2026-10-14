@@ -331,7 +331,7 @@
     {
       "name": "UpdateBook",
       "docs": [
-        "Replace the resting bid/ask levels of a maker book.",
+        "Replace the resting bid/ask levels of a market-maker (MM) book.",
         "",
         "WIRE LAYOUT: this instruction does not use borsh. The data buffer is the raw",
         "536-byte UpdateBookData C struct, whose first byte IS this instruction's",
@@ -349,8 +349,8 @@
         "Bids and asks each occupy a fixed 16-slot region; numBids/numAsks say how many",
         "leading slots of each are live. sequenceNumber must exceed",
         "makerBook.lastUpdatedSequenceNumber by at least 1 and at most MAX_SEQUENCE_JUMP.",
-        "midPriceTicks must be 0 for LO books, which also emit a place/resize/cancel",
-        "event per changed level."
+        "Limit-order (LO) books are rejected with LimitOrderBookRequiresUpdateBookLimit (531):",
+        "they are written with UpdateBookLimit."
       ],
       "accounts": [
         {
@@ -868,7 +868,7 @@
         "",
         "REMAINING ACCOUNTS - not expressible positionally in this IDL. Append them to",
         "`keys` after the fixed accounts, in this order:",
-        "  [writable] makerBookAccounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (64) MakerBook PDAs to match against. At least one is required; each must be writable and program-owned; duplicates are rejected.",
+        "  [writable] makerBookAccounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (48) MakerBook PDAs to match against. At least one is required; each must be writable and program-owned; duplicates are rejected.",
         "  [] eventAuthority - OPTIONAL, must be LAST if present: Fzo6R5MrDSComspzpQNiieGaYVpNksqeLC27CKTPMTm1. When supplied, SyncFillEvent is emitted via a self-CPI instead of sol_log_data. MakerFillEvent always uses sol_log_data."
       ],
       "accounts": [
@@ -952,14 +952,14 @@
         "value": 15
       },
       "remainingAccounts": [
-        "[writable] makerBookAccounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (64) MakerBook PDAs to match against. At least one is required; each must be writable and program-owned; duplicates are rejected.",
+        "[writable] makerBookAccounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (48) MakerBook PDAs to match against. At least one is required; each must be writable and program-owned; duplicates are rejected.",
         "[] eventAuthority - OPTIONAL, must be LAST if present: Fzo6R5MrDSComspzpQNiieGaYVpNksqeLC27CKTPMTm1. When supplied, SyncFillEvent is emitted via a self-CPI instead of sol_log_data. MakerFillEvent always uses sol_log_data."
       ]
     },
     {
       "name": "InitializeMakerRegistry",
       "docs": [
-        "Create the market's MakerRegistry (2128 bytes, up to MAX_REGISTRY_MAKERS = 64).",
+        "Create the market's MakerRegistry (2128 bytes, seating up to MAX_SEATED_MAKERS = 48).",
         "",
         "ARCHER_GLOBAL_AUTHORITY only, on any market; it also pays the rent.",
         "Takes no instruction data."
@@ -1001,7 +1001,7 @@
       "docs": [
         "Register a maker book in the market's registry.",
         "",
-        "ARCHER_GLOBAL_AUTHORITY only. Takes no instruction data. Fails if the registry is full (64) or the book is already registered."
+        "ARCHER_GLOBAL_AUTHORITY only. Takes no instruction data. Fails if the registry is full (48) or the book is already registered. Increments the registry version."
       ],
       "accounts": [
         {
@@ -1040,7 +1040,7 @@
       "docs": [
         "Deregister a maker book in the market's registry.",
         "",
-        "ARCHER_GLOBAL_AUTHORITY only. Takes no instruction data. Fails if the book is not currently registered."
+        "ARCHER_GLOBAL_AUTHORITY only. Takes no instruction data. Fails if the book is not currently registered. Increments the registry version."
       ],
       "accounts": [
         {
@@ -1344,7 +1344,7 @@
         "",
         "REMAINING ACCOUNTS - not expressible positionally in this IDL. Append them to",
         "`keys` after the fixed accounts, in this order:",
-        "  [writable] makerBookAccounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (64) MakerBook PDAs to match against. At least one is required; each must be writable and program-owned; duplicates are rejected.",
+        "  [writable] makerBookAccounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (48) MakerBook PDAs to match against. At least one is required; each must be writable and program-owned; duplicates are rejected.",
         "  [] eventAuthority - OPTIONAL, must be LAST if present: Fzo6R5MrDSComspzpQNiieGaYVpNksqeLC27CKTPMTm1. When supplied, SyncFillEvent is emitted via a self-CPI instead of sol_log_data. MakerFillEvent always uses sol_log_data."
       ],
       "accounts": [
@@ -1434,7 +1434,7 @@
         "value": 35
       },
       "remainingAccounts": [
-        "[writable] makerBookAccounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (64) MakerBook PDAs to match against. At least one is required; each must be writable and program-owned; duplicates are rejected.",
+        "[writable] makerBookAccounts - 1..=MAX_MAKER_BOOKS_PER_AUCTION (48) MakerBook PDAs to match against. At least one is required; each must be writable and program-owned; duplicates are rejected.",
         "[] eventAuthority - OPTIONAL, must be LAST if present: Fzo6R5MrDSComspzpQNiieGaYVpNksqeLC27CKTPMTm1. When supplied, SyncFillEvent is emitted via a self-CPI instead of sol_log_data. MakerFillEvent always uses sol_log_data."
       ]
     },
@@ -1444,7 +1444,7 @@
         "Place, resize or cancel individual levels on a limit-order (LO) maker book, with on-chain",
         "post-only enforcement against the market's registered makers.",
         "",
-        "Unlike UpdateBook this does not replace the level set from a client snapshot: only the",
+        "The only instruction besides ClearBook that changes an LO book's levels. Unlike UpdateBook it does not replace the level set from a client snapshot: only the",
         "levels named in the ops change. Each op carries the resting size the client last saw; if",
         "the level's size differs when the instruction lands (a fill got in between), the op fails",
         "with LevelSizeMismatch (527) instead of writing the old order back. expectedSize == u64::MAX",
@@ -1467,7 +1467,19 @@
         "",
         "After the fixed accounts (and the optional archerAccount), exactly makerRegistry.numMakers",
         "MakerBook accounts follow, each registry entry once, in any order; error 525 otherwise.",
-        "They are required for both cross policies."
+        "They are required, under both cross policies, when any op places or grows a level. A call",
+        "that only cancels or shrinks levels never reads them: they may be omitted and the registry",
+        "passed read-only.",
+        "",
+        "REGISTRY SEATING: a call that places or grows a level also seats the book in the registry",
+        "if it is not seated yet, so aggregators can route to it from the same slot. It takes, in",
+        "order of preference: a free slot (below MAX_SEATED_MAKERS); the seat of a closed book; the",
+        "seat of a dead LO book (suspended, expired, unfundable, or empty on both sides); the seat of",
+        "the live LO book it beats by the most. It beats a seat when it is strictly better on every",
+        "side both rest on, and that seat is not the registry's only best price on a side the placing",
+        "book does not quote. An MM book is never displaced, dead or alive. A change increments",
+        "makerRegistry.version and emits RegistrySeatEvent. Once seated, the book is itself one of the",
+        "registry entries the next placing call must pass."
       ],
       "accounts": [
         {
@@ -1490,9 +1502,9 @@
         },
         {
           "name": "makerRegistry",
-          "isMut": false,
+          "isMut": true,
           "isSigner": false,
-          "desc": "The market's MakerRegistry PDA; must reference this market"
+          "desc": "The market's MakerRegistry PDA; must reference this market. Must be writable when any op places or grows a level (AccountNotWritable, 201, otherwise); may be read-only on a cancel-only call"
         },
         {
           "name": "archerAccount",
@@ -1537,7 +1549,7 @@
         "",
         "Vault only: the signer must be makerBook.maker itself (never a delegate), owned by the",
         "Archer Vault program, and the canonical MakerVault PDA for this book (InvalidMakerVault,",
-        "529, otherwise). Wallet- and ArcherAccount-owned books cannot be rescaled.",
+        "529, otherwise). Wallet- and ArcherAccount-owned books cannot be rescaled, and LO books are rejected as in UpdateBook.",
         "",
         "Data: the raw 536-byte UpdateBookData, byte 0 = 37."
       ],
@@ -1573,6 +1585,54 @@
         "type": "u8",
         "value": 37
       }
+    },
+    {
+      "name": "UpdateRegistry",
+      "docs": [
+        "Replace the registry's whole maker set in one call.",
+        "",
+        "ARCHER_GLOBAL_AUTHORITY only, on any market.",
+        "Compare-and-set: fails with RegistryVersionMismatch (530) unless expectedVersion equals",
+        "the registry's current version, so a set computed from stale state never overwrites a",
+        "book that seated itself in the meantime. Increments the version.",
+        "",
+        "REMAINING ACCOUNTS - the new maker set, in seat order, appended after the fixed accounts.",
+        "Every book must be a MakerBook of this market; duplicates are rejected (521) and at most",
+        "MAX_SEATED_MAKERS (48) may be passed (510). Passing none empties the registry."
+      ],
+      "accounts": [
+        {
+          "name": "adminAccount",
+          "isMut": false,
+          "isSigner": true,
+          "desc": "ARCHER_GLOBAL_AUTHORITY. Not the market admin."
+        },
+        {
+          "name": "marketAccount",
+          "isMut": false,
+          "isSigner": false,
+          "desc": "Market state account"
+        },
+        {
+          "name": "registryAccount",
+          "isMut": true,
+          "isSigner": false,
+          "desc": "MakerRegistry PDA"
+        }
+      ],
+      "args": [
+        {
+          "name": "expectedVersion",
+          "type": "u32"
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 38
+      },
+      "remainingAccounts": [
+        "[] makerBookAccounts - 0..=MAX_SEATED_MAKERS (48) MakerBook PDAs of this market: the new maker set, in seat order."
+      ]
     }
   ],
   "accounts": [
@@ -1965,7 +2025,7 @@
             "name": "admin",
             "type": "publicKey",
             "docs": [
-              "Copied from the market admin at creation"
+              "Set to the global authority at creation. Not read: registry instructions check the signer against ARCHER_GLOBAL_AUTHORITY"
             ]
           },
           {
@@ -1980,11 +2040,23 @@
             "type": {
               "array": [
                 "u8",
-                7
+                3
               ]
             },
             "docs": [
               "Reserved. Never read."
+            ]
+          },
+          {
+            "name": "version",
+            "type": {
+              "array": [
+                "u8",
+                4
+              ]
+            },
+            "docs": [
+              "u32 LE, incremented on every change to the maker set. Stored as bytes to keep the struct's alignment at 1"
             ]
           },
           {
@@ -1996,7 +2068,7 @@
               ]
             },
             "docs": [
-              "Registered MakerBook pubkeys; only the first numMakers are meaningful"
+              "Registered MakerBook pubkeys; only the first numMakers are meaningful, and numMakers never exceeds MAX_SEATED_MAKERS (48)"
             ]
           }
         ]
@@ -2722,7 +2794,7 @@
     {
       "name": "LimitOrderPlacedEvent",
       "docs": [
-        "LO books only. sol_log_data, when UpdateBook adds a level."
+        "LO books only. sol_log_data, when UpdateBookLimit adds a level."
       ],
       "discriminator": "event:LimitOrderPlacedEvent",
       "discriminatorBytes": [
@@ -2766,7 +2838,8 @@
     {
       "name": "LimitOrderCanceledEvent",
       "docs": [
-        "LO books only. sol_log_data, when UpdateBook or ClearBook removes a level."
+        "LO books only. sol_log_data, when UpdateBookLimit or ClearBook removes a level.",
+        "prevSizeLots is the size that was resting; a cancel of a level that is not resting emits nothing."
       ],
       "discriminator": "event:LimitOrderCanceledEvent",
       "discriminatorBytes": [
@@ -2810,7 +2883,8 @@
     {
       "name": "LimitOrderResizedEvent",
       "docs": [
-        "LO books only. sol_log_data, when UpdateBook changes a level's size."
+        "LO books only. sol_log_data, when UpdateBookLimit changes a level's size.",
+        "prevSizeLots is the size that was resting, not the size the client expected."
       ],
       "discriminator": "event:LimitOrderResizedEvent",
       "discriminatorBytes": [
@@ -2852,6 +2926,47 @@
         {
           "name": "sequenceNumber",
           "type": "u64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "RegistrySeatEvent",
+      "docs": [
+        "sol_log_data, when UpdateBookLimit seats the placing LO book in the registry.",
+        "evicted is the book that lost the seat, or the default pubkey when a free slot was used.",
+        "version is the registry's version after the change."
+      ],
+      "discriminator": "event:RegistrySeatEvent",
+      "discriminatorBytes": [
+        52,
+        20,
+        133,
+        72,
+        144,
+        152,
+        115,
+        7
+      ],
+      "fields": [
+        {
+          "name": "market",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "seated",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "evicted",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "version",
+          "type": "u32",
           "index": false
         }
       ]
@@ -3179,6 +3294,16 @@
       "msg": "UpdateBookRescale must be signed by the book's maker, a canonical Archer Vault MakerVault PDA"
     },
     {
+      "code": 530,
+      "name": "RegistryVersionMismatch",
+      "msg": "Registry changed since the expected version was read; refetch and retry"
+    },
+    {
+      "code": 531,
+      "name": "LimitOrderBookRequiresUpdateBookLimit",
+      "msg": "Limit-order (LO) maker books are written with UpdateBookLimit, not UpdateBook"
+    },
+    {
       "code": 600,
       "name": "InvalidFee",
       "msg": "Invalid maker fee"
@@ -3483,7 +3608,7 @@
     {
       "name": "MAX_MAKER_BOOKS_PER_AUCTION",
       "type": "u32",
-      "value": "64",
+      "value": "48",
       "docs": [
         "Maker books one Swap / SwapFromArcherAccount may match against"
       ]
@@ -3492,6 +3617,14 @@
       "name": "MAX_REGISTRY_MAKERS",
       "type": "u32",
       "value": "64"
+    },
+    {
+      "name": "MAX_SEATED_MAKERS",
+      "type": "u32",
+      "value": "48",
+      "docs": [
+        "Most books a registry may seat. Below the makers[] capacity (MAX_REGISTRY_MAKERS) so one transaction can carry every seated book"
+      ]
     },
     {
       "name": "MAKER_KIND_MM",

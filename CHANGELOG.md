@@ -20,6 +20,49 @@ Each release also states the Solana crate versions it is built against, since
 `Pubkey` and `Instruction` in the public API come from them and must match the
 ones in your own dependency tree.
 
+## [0.3.0]
+
+Introduce the self-maintaining maker registry: limit-order books
+seat themselves in the registry when they place, the global authority replaces
+the whole set with `UpdateRegistry`, and a registry seats at most 48 books.
+
+### New
+
+- **`UpdateRegistry` (38)** — `onchain::builders::create_update_registry_instruction`
+  and `ix_builder::market::build_update_registry_ix`. Replaces the registry's
+  whole maker set, global authority only
+- **`MakerRegistry::version()`** reads the new change counter, and
+  **`MakerRegistry::get_makers()`** returns the seated books in registry
+  order. **`MAX_SEATED_MAKERS`** (48) is the seat cap, also in `constants`.
+- **`RegistrySeatEvent`** and `REGISTRY_SEAT_DISC`, emitted when a placing
+  `UpdateBookLimit` seats its book: market, seated book, evicted book (the
+  default pubkey when a free slot was used), registry version after.
+- **`LevelOp::may_place_or_grow`** and **`level_ops_may_seat`** say whether an
+  op, or an instruction's ops, can place or grow a level — the test the
+  program applies to decide whether a call reads the registry and may seat.
+- Errors **530** `RegistryVersionMismatch` and **531**
+  `LimitOrderBookRequiresUpdateBookLimit` (an LO book written with
+  `UpdateBook` or `UpdateBookRescale`).
+- `MAX_LEVEL_OPS` is in `constants`.
+
+### Breaking
+
+- **`MakerRegistry` layout.** `reserved_padding_1` shrinks from `[u8; 7]` to
+  `[u8; 3]` and `version: [u8; 4]` follows it. The account size (2128) and
+  every other offset are unchanged, so existing on-chain registries read
+  correctly; code that named `reserved_padding_1` by type must change.
+- **`MAX_MAKER_BOOKS_PER_AUCTION` is 48, not 64.** A swap may carry at most
+  48 maker books. No registry seats more, so a swap built from a registry is
+  unaffected.
+- **`create_update_book_limit_instruction` passes the registry writable**
+  when any op may place or grow a level (`level_ops_may_seat`). The builder
+  still attaches exactly the `registry_books` it is
+  given: pass `&[]` on a cancel-only call to leave the registered books off
+  the transaction, or the full set to keep today's shape.
+- **`limit_order::actions` cancel-only instructions carry no registered
+  books** — `build_cancel`, and `build_modify` when it only shrinks or
+  cancels — with the registry read-only.
+
 ## [0.2.0] - 2026-10-03
 
 Moves the SDK to the current Solana crates. The SDK's own API, the account

@@ -8,7 +8,10 @@
 //!
 //! Every limit-order write is an `UpdateBookLimit` (see [`PostOnly`]): the
 //! program enforces post-only against the market's registered makers at
-//! placement. `UpdateBook` is the market-maker path.
+//! placement, and a write that places or grows a level also seats the book in
+//! the market's registry, so aggregators route to it. A write that only
+//! cancels or shrinks carries no registered books and cannot fail on a
+//! registry change. `UpdateBook` is the market-maker path.
 //!
 //! Writes are per level: each action diffs the client's snapshot of the book
 //! against its intent and emits one compare-and-set op per touched level

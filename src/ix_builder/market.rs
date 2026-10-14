@@ -167,8 +167,8 @@ pub fn build_update_taker_fee_ix(
 
 /// Build an InitializeMakerRegistry instruction (Archer authority only)
 ///
-/// Creates the market's registry (up to `MAX_REGISTRY_MAKERS` books). The
-/// authority also pays the rent. The registry PDA is derived for you.
+/// Creates the market's registry (seating up to `MAX_SEATED_MAKERS` books).
+/// The authority also pays the rent. The registry PDA is derived for you.
 pub fn build_initialize_maker_registry_ix(market: &Pubkey, authority: &Pubkey) -> Instruction {
     crate::onchain::builders::create_initialize_maker_registry_instruction(*authority, *market)
 }
@@ -192,4 +192,24 @@ pub fn build_deregister_maker_ix(
     maker_book: &Pubkey,
 ) -> Instruction {
     crate::onchain::builders::create_deregister_maker_instruction(*authority, *market, *maker_book)
+}
+
+/// Build an UpdateRegistry instruction (Archer authority only)
+///
+/// Replaces the market's whole maker set with `books`, in seat order, at most
+/// `MAX_SEATED_MAKERS` of them. `expected_version` must be the registry's
+/// current `version()` or the program fails with `RegistryVersionMismatch`
+/// (530): read the registry, compute the set, and pass the version you read.
+pub fn build_update_registry_ix(
+    market: &Pubkey,
+    authority: &Pubkey,
+    books: &[Pubkey],
+    expected_version: u32,
+) -> Instruction {
+    crate::onchain::builders::create_update_registry_instruction(
+        *authority,
+        *market,
+        books,
+        expected_version,
+    )
 }

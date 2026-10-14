@@ -2,7 +2,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 
 use crate::onchain::{ArcherError, PPM_DIVISOR};
 
-pub const MAX_MAKER_BOOKS_PER_AUCTION: usize = 64;
+pub const MAX_MAKER_BOOKS_PER_AUCTION: usize = 48;
 
 pub const MAX_BUILDER_FEE_PPM: u32 = 10_000;
 

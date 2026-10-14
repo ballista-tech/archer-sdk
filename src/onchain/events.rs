@@ -71,6 +71,14 @@ pub struct LimitOrderResizedEvent {
     pub sequence_number: u64,
 }
 
+#[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
+pub struct RegistrySeatEvent {
+    pub market: Pubkey,
+    pub seated: Pubkey,
+    pub evicted: Pubkey,
+    pub version: u32,
+}
+
 /// Event discriminators: `sha256("event:<Name>")[..8]`, precomputed.
 ///
 /// Every Archer event is emitted as `discriminator || borsh(event)`. To decode
@@ -84,3 +92,4 @@ pub const MAKER_FILL_DISC: [u8; 8] = [60, 14, 66, 1, 204, 202, 42, 161];
 pub const LO_PLACED_DISC: [u8; 8] = [102, 100, 70, 242, 177, 143, 91, 181];
 pub const LO_CANCELED_DISC: [u8; 8] = [38, 110, 113, 150, 123, 237, 121, 105];
 pub const LO_RESIZED_DISC: [u8; 8] = [133, 247, 99, 188, 194, 35, 12, 234];
+pub const REGISTRY_SEAT_DISC: [u8; 8] = [52, 20, 133, 72, 144, 152, 115, 7];

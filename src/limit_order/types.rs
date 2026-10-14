@@ -54,11 +54,13 @@ pub enum CancelMode {
 
 /// The registry set every limit-order action carries: all limit-order writes
 /// are `UpdateBookLimit`, so the program enforces post-only against the
-/// market's registered makers at placement.
+/// market's registered makers at placement, and seats the placing book.
 ///
 /// `registry_books` must be exactly the registry's maker books (any order);
 /// build it with [`PostOnly::from_registry`] from a freshly fetched
-/// [`MakerRegistry`](crate::onchain::MakerRegistry).
+/// [`MakerRegistry`](crate::onchain::MakerRegistry). Only an instruction that
+/// may place or grow a level carries them (with `registry` writable); a
+/// cancel-only instruction carries `registry` read-only and no books.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PostOnly {
     pub registry: Pubkey,

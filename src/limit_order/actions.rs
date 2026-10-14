@@ -24,8 +24,8 @@ use crate::onchain::{
         create_initialize_maker_book_instruction, create_maker_deposit_funds_instruction,
         create_maker_withdraw_funds_instruction, create_update_book_limit_instruction,
     },
-    ArcherUnit, BaseLots, LevelOp, MakerBook, MakerDepositFundsParams, MakerWithdrawFundsParams,
-    QuoteLots, MAX_LEVEL_OPS,
+    level_ops_may_seat, ArcherUnit, BaseLots, LevelOp, MakerBook, MakerDepositFundsParams,
+    MakerWithdrawFundsParams, QuoteLots, MAX_LEVEL_OPS,
 };
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 
@@ -83,7 +83,9 @@ pub struct LimitOrderActionResult {
 ///   price, so a level that appeared there in between fails the write.
 /// * The write is an `UpdateBookLimit`: the program rejects a placed level
 ///   that crosses a registered maker (`PostOnlyWouldCross`) unless
-///   `post_only.cross_policy` is `Allow`.
+///   `post_only.cross_policy` is `Allow`. It also seats the book in the
+///   market's registry if it is not seated yet and earns a seat, so
+///   aggregators route to the order from the slot it lands in.
 ///
 /// Fails locally if an order would duplicate a resting price, overfill a
 /// side, or cross the user's own book.
@@ -213,8 +215,10 @@ pub fn build_modify(
 /// Cancel one or more limit orders atomically. All IDs must currently exist
 /// in the snapshot. Optionally bundles a withdraw of newly freed collateral.
 ///
-/// A cancel can never cross, so the program never rejects it under post-only;
-/// the registry set in `post_only` is still required by the instruction.
+/// A cancel can never cross and never seats the book, so the instruction
+/// carries the registry read-only and none of the registered books: it cannot
+/// fail because the registry changed. `post_only` still names the registry
+/// account; its book set is not used here.
 /// `cancel_mode` picks the guard: [`CancelMode::Any`] removes whatever still
 /// rests, [`CancelMode::Strict`] fails if a fill changed the size in between.
 #[allow(clippy::too_many_arguments)]
@@ -461,8 +465,11 @@ pub fn compute_required_collateral(
 }
 
 /// Append the `UpdateBookLimit`(s) for `ops`, at most [`MAX_LEVEL_OPS`] per
-/// instruction, each with the next sequence number. Returns the last
-/// sequence number written — `current_seq` itself when there are no ops.
+/// instruction, each with the next sequence number. An instruction whose ops
+/// may place or grow a level carries the registry writable with every
+/// registered book; one that only cancels or shrinks carries the registry
+/// read-only and no books. Returns the last sequence number written —
+/// `current_seq` itself when there are no ops.
 fn push_level_ops(
     instructions: &mut Vec<Instruction>,
     identity: &Identity,
@@ -475,12 +482,21 @@ fn push_level_ops(
     let mut seq = current_seq;
     for chunk in ops.chunks(MAX_LEVEL_OPS) {
         seq += 1;
+        // A chunk that cannot seat the book (cancels and decreases only) goes
+        // out without the registered books: the program never reads them on
+        // such a call, and leaving them off keeps it off their account locks
+        // and immune to registry changes.
+        let registry_books: &[Pubkey] = if level_ops_may_seat(chunk) {
+            &post_only.registry_books
+        } else {
+            &[]
+        };
         instructions.push(create_update_book_limit_instruction(
             identity,
             *market,
             maker_book_pda,
             post_only.registry,
-            &post_only.registry_books,
+            registry_books,
             post_only.cross_policy as u8,
             seq,
             chunk,

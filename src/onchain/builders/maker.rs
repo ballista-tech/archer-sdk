@@ -5,8 +5,9 @@ use solana_program::{
 use solana_system_interface::program as system_program;
 
 use crate::onchain::{
-    encode_level_ops, ArcherInstruction, ArcherUnit, LevelOp, MakerDepositFundsParams,
-    MakerLevel, MakerWithdrawFundsParams, Ticks, UpdateBookData, MAKER_LEVEL_SIZE, MAX_LEVELS,
+    encode_level_ops, level_ops_may_seat, ArcherInstruction, ArcherUnit, LevelOp,
+    MakerDepositFundsParams, MakerLevel, MakerWithdrawFundsParams, Ticks, UpdateBookData,
+    MAKER_LEVEL_SIZE, MAX_LEVELS,
 };
 #[allow(unused_imports)]
 use crate::onchain::{CROSS_POLICY_ALLOW, CROSS_POLICY_REJECT};
@@ -248,16 +249,28 @@ pub fn create_update_book_instruction(
 
 /// `UpdateBookLimit` (36): place, resize or cancel individual levels on an
 /// LO book with on-chain post-only enforcement against the market's
-/// registered makers.
+/// registered makers; a call that places also seats the book in the registry.
 ///
 /// Data is `[36, cross_policy, sequence u64 LE, num_ops u8, ops…]` with one
 /// 25-byte [`LevelOp`] per op, `1..=MAX_LEVEL_OPS` of them (the function
-/// panics outside that range; chunk first). After the fixed accounts (and the
-/// ArcherAccount, if the identity has one) come exactly the registry's maker
-/// books, each once, in any order — the program rejects a wrong count, a
-/// duplicate or an unregistered book with `RegistryBooksMismatch` (525).
+/// panics outside that range; chunk first).
+///
+/// After the fixed accounts (and the ArcherAccount, if the identity has one)
+/// come `registry_books`, each read-only, in the order given. What to pass
+/// follows the ops, see [`level_ops_may_seat`]:
+/// - If any op may place or grow a level, the call may seat the book: the
+///   registry is passed writable (a read-only one fails with
+///   `AccountNotWritable`, 201) and `registry_books` must be exactly the
+///   registry's maker set, each once, in any order. The program rejects a
+///   wrong count, a duplicate or an unregistered book with
+///   `RegistryBooksMismatch` (525).
+/// - Otherwise (cancels and decreases only) the registry is passed read-only
+///   and the program never reads the registered books, so pass `&[]` to keep
+///   the call off their account locks and immune to registry changes.
+///
 /// `cross_policy` is [`CROSS_POLICY_REJECT`] to fail a crossing place/grow
-/// (`PostOnlyWouldCross`, 524) or [`CROSS_POLICY_ALLOW`] to place it anyway.
+/// (`PostOnlyWouldCross`, 524) or [`CROSS_POLICY_ALLOW`] to place it anyway;
+/// seating happens under both.
 #[allow(clippy::too_many_arguments)]
 pub fn create_update_book_limit_instruction(
     maker: impl Into<MakerIdentity>,
@@ -271,12 +284,17 @@ pub fn create_update_book_limit_instruction(
 ) -> Instruction {
     let maker = maker.into();
     let data = encode_level_ops(cross_policy, sequence_number, ops);
+    let may_seat = level_ops_may_seat(ops);
 
     let mut accounts = vec![
         AccountMeta::new_readonly(maker.signer(), true),
         AccountMeta::new(maker_book, false),
         AccountMeta::new_readonly(market, false),
-        AccountMeta::new_readonly(maker_registry, false),
+        if may_seat {
+            AccountMeta::new(maker_registry, false)
+        } else {
+            AccountMeta::new_readonly(maker_registry, false)
+        },
     ];
     accounts.extend(maker.trailing_archer_account());
     accounts.extend(

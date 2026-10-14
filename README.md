@@ -9,18 +9,11 @@ against its liquidity, and run a market-making book.
 
 ```toml
 [dependencies]
-archer-sdk = "0.2"
+archer-sdk = "0.3"
 
 # with an async RPC client:
-archer-sdk = { version = "0.2", features = ["client"] }
+archer-sdk = { version = "0.3", features = ["client"] }
 ```
-
-> **Note — this release targets an unreleased program version.**
->
-> Reading state, address derivation, the quoting math, and the maker and
-> limit-order instructions all work against the program deployed today.
-> **Swaps, market creation and the delegated-account instructions require the
-> upcoming program upgrade** and will be rejected until it ships
 
 ---
 
@@ -204,6 +197,32 @@ stateless `limit_order::actions` take the same set as a `PostOnly`. A
 registered book that has since been closed is skipped by the program, but its
 key must still be passed.
 
+**Seating is automatic.** A placing call also seats the book in the market's
+registry if it is not seated yet, so aggregators route to the order from the
+slot it lands in. A full registry gives up, in order, a closed book's seat, a
+dead limit-order book's seat, then the seat of the live limit-order book the
+newcomer beats by the most; market-maker seats are never taken this way. The
+program emits a `RegistrySeatEvent` when it happens. Once seated, the book is
+itself part of the set its next placing call must pass.
+
+**Cancels are registry-free.** A call that only cancels or shrinks levels is
+sent with the registry read-only and no registered books, so it never fails
+because the registry changed and stays off the other makers' account locks.
+`actions` decides this per instruction from the ops it emits; the low-level
+builder passes whatever books you give it and sets the writable flag.
+
+The global authority maintains the rest of the set — market-maker seats and
+dead-seat cleanup — with `UpdateRegistry`, a compare-and-set on the registry's
+`version()` so a set computed from stale state never overwrites a book that
+just seated itself:
+
+```rust
+use archer_sdk::ix_builder::market;
+
+let registry = accounts::parse_maker_registry(&data)?;
+let ix = market::build_update_registry_ix(&market, &authority, &books, registry.version());
+```
+
 `compute_required_collateral` tells you what a set of orders will lock — using
 the program's exact ceiling arithmetic, so your estimate matches what the chain
 will demand:
@@ -311,6 +330,10 @@ if payload.starts_with(&MAKER_FILL_DISC) {
     let fill = MakerFillEvent::try_from_slice(&payload[8..])?;
 }
 ```
+
+`RegistrySeatEvent` (`REGISTRY_SEAT_DISC`) reports each self-seating: the
+market, the seated book, the evicted book (the default pubkey when a free slot
+was used) and the registry version after the change.
 
 Passing the event authority as the final account of a swap upgrades
 `SyncFillEvent` from a log line to a self-CPI event, which lands in the

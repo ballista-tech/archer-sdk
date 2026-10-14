@@ -499,18 +499,64 @@ impl MakerBook {
             && current_slot.saturating_sub(self.last_updated_slot) >= self.expiry_in_slots
     }
 
+    /// Whether the matching engine may fill this book at `current_slot`: it is
+    /// active, its quotes have not expired, and its quote balances are
+    /// fundable at the current mid. A transcription of the program's rule,
+    /// which both its swap engine and its registry seat scoring use; `Err`
+    /// for a status byte the program does not know.
+    #[inline(always)]
+    pub fn is_fillable(&self, current_slot: u64, maker_fee_ppm: i32) -> Result<bool, ArcherError> {
+        let status = self
+            .get_status()
+            .map_err(|_| ArcherError::InvalidMakerBook)?;
+        if !status.can_participate_in_auction() {
+            return Ok(false);
+        }
+
+        if self.expiry_in_slots > 0 {
+            let slots_since_update = current_slot.saturating_sub(self.last_updated_slot);
+            if slots_since_update >= self.expiry_in_slots {
+                return Ok(false);
+            }
+        }
+
+        Ok(self.is_quote_sync_fundable(maker_fee_ppm))
+    }
+
     /// Whether the matching engine would consider this book in an auction at
     /// `current_slot`: an active status, not stale, and able to fund any
     /// deferred rebalance. These are the three per-book skips the aggregator
     /// applies, in the same order, so a quoter that filters with this shows
-    /// exactly the liquidity the program will fill.
+    /// exactly the liquidity the program will fill. [`Self::is_fillable`]
+    /// with an unknown status read as ineligible.
     #[inline]
     pub fn is_auction_eligible(&self, current_slot: u64, maker_fee_ppm: i32) -> bool {
-        self.get_status()
-            .map(|s| s.can_participate_in_auction())
+        self.is_fillable(current_slot, maker_fee_ppm)
             .unwrap_or(false)
-            && !self.is_stale(current_slot)
-            && self.is_quote_sync_fundable(maker_fee_ppm)
+    }
+
+    /// The first resting level on a side at or after index `from`, as
+    /// `(index, absolute price, size)`. Levels are stored best-first, so
+    /// `from = 0` gives the side's best price. Unlike [`Self::best_bid_price`]
+    /// this skips inactive slots, which is how the program reads a book's
+    /// best price when it scores registry seats.
+    #[inline(always)]
+    pub fn next_level(&self, is_bid_side: bool, from: usize) -> Option<(u8, u64, u64)> {
+        let levels = if is_bid_side {
+            &self.bid_levels
+        } else {
+            &self.ask_levels
+        };
+        levels
+            .iter()
+            .enumerate()
+            .skip(from)
+            .filter(|(_, level)| level.is_active())
+            .find_map(|(lvl_idx, level)| {
+                level
+                    .absolute_price(self.mid_price_ticks)
+                    .map(|price| (lvl_idx as u8, price, level.size_in_base_lots.as_u64()))
+            })
     }
 
     #[inline(always)]
