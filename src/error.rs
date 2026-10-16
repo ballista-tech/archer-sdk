@@ -107,6 +107,15 @@ pub enum ArcherSDKError {
 
     #[error("sequence number {proposed} is not ahead of the book's current {current}")]
     StaleSequenceNumber { current: u64, proposed: u64 },
+
+    #[error("f64::MAX drains the book's free balance, which needs the book: use ArcherClient::build_withdraw or build_withdraw_all_ix")]
+    WithdrawAllNeedsBook,
+
+    #[error("{ops} level ops seat an unseated book on a full registry: seating evicts a book the client cannot predict, so send the first {} ops in their own transaction and rebuild from the new registry", crate::onchain::MAX_LEVEL_OPS)]
+    RegistryFullSplitRequired { ops: usize },
+
+    #[error("invalid basis points: {0} (must be finite)")]
+    InvalidBps(f64),
 }
 
 pub type SdkResult<T> = Result<T, ArcherSDKError>;

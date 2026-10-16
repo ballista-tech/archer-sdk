@@ -265,8 +265,8 @@ fn validate_quote_structure(quotes: &TwoSidedQuote) -> SdkResult<()> {
 ///
 /// Strategy:
 /// - Two-sided: midpoint of best bid and best ask.
-/// - Bid-only: best bid price (offset slightly above).
-/// - Ask-only: best ask price (offset slightly below).
+/// - Bid-only: the best bid price itself, so that level rests at offset 0.
+/// - Ask-only: the best ask price itself, likewise.
 /// - Empty: error (can't determine mid from nothing).
 fn compute_mid_price(quotes: &TwoSidedQuote, config: &MarketConfig) -> SdkResult<u64> {
     match (quotes.bids.first(), quotes.asks.first()) {

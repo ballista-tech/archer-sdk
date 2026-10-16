@@ -15,7 +15,7 @@ use crate::onchain::{
 };
 
 use crate::config::MarketConfig;
-use crate::error::SdkResult;
+use crate::error::{ArcherSDKError, SdkResult};
 use crate::identity::Identity;
 use crate::math::lots::{base_amount_to_lots, quote_amount_to_lots};
 use crate::math::BookUpdate;
@@ -203,7 +203,7 @@ pub fn build_clear_book_ix(
 /// Closes the maker book PDA and refunds the rent to the maker. The book must be fully
 /// empty first — callers should sequence:
 ///   1. `build_clear_book_ix`           — zero all levels, unlock balances
-///   2. `build_withdraw_ix(MAX, MAX)`   — drain free balance to wallet
+///   2. `build_withdraw_all_ix(&book, …)` — drain free balance to wallet
 ///   3. `build_close_maker_book_ix`     — reclaim the PDA rent
 pub fn build_close_maker_book_ix(identity: impl Into<Identity>, market: &Pubkey) -> Instruction {
     let identity = identity.into();
@@ -304,10 +304,12 @@ pub fn build_deposit_ix(
         ))
 }
 
-/// Build a withdrawal instruction.
+/// Build a withdrawal instruction from human-readable amounts.
 ///
-/// Pass `f64::MAX` to withdraw all free balance for that side.
-/// Pass `0.0` to skip withdrawing that side.
+/// Pass `0.0` to leave a side alone. To drain, read the book and use [`build_withdraw_all_ix`], or
+/// [`crate::client::ArcherClient::build_withdraw`], which reads it for you.
+/// `f64::MAX` here returns [`ArcherSDKError::WithdrawAllNeedsBook`].
+#[allow(clippy::too_many_arguments)]
 pub fn build_withdraw_ix(
     maker: impl Into<Identity>,
     market: &Pubkey,
@@ -319,42 +321,114 @@ pub fn build_withdraw_ix(
     quote_token_program: &Pubkey,
     config: &MarketConfig,
 ) -> SdkResult<Instruction> {
+    let (base_lots, quote_lots) = resolve_withdraw_lots(base_amount, quote_amount, None, config)?;
+    Ok(build_withdraw_lots_ix(
+        maker,
+        market,
+        base_lots,
+        quote_lots,
+        maker_base_ata,
+        maker_quote_ata,
+        base_token_program,
+        quote_token_program,
+        config,
+    ))
+}
+
+/// Withdraw every free lot on both sides, as the book stands in `book`.
+///
+/// Reads the free balances the way the program caps a withdrawal: base from
+/// `base_free`, quote after any pending mid-price rebalance is applied
+/// ([`crate::accounts::withdrawable_lots`]). Build from a fresh read and send
+/// promptly: a fill in between changes the free balance and the program
+/// rejects the stale figure with `InsufficientBalance` (402).
+#[allow(clippy::too_many_arguments)]
+pub fn build_withdraw_all_ix(
+    maker: impl Into<Identity>,
+    market: &Pubkey,
+    book: &crate::onchain::MakerBook,
+    maker_base_ata: &Pubkey,
+    maker_quote_ata: &Pubkey,
+    base_token_program: &Pubkey,
+    quote_token_program: &Pubkey,
+    config: &MarketConfig,
+) -> Instruction {
+    let (base_lots, quote_lots) = crate::accounts::withdrawable_lots(book, config.maker_fee_ppm);
+    build_withdraw_lots_ix(
+        maker,
+        market,
+        base_lots,
+        quote_lots,
+        maker_base_ata,
+        maker_quote_ata,
+        base_token_program,
+        quote_token_program,
+        config,
+    )
+}
+
+/// Build a withdrawal instruction in lots, the unit the program reads.
+#[allow(clippy::too_many_arguments)]
+pub fn build_withdraw_lots_ix(
+    maker: impl Into<Identity>,
+    market: &Pubkey,
+    base_lots: u64,
+    quote_lots: u64,
+    maker_base_ata: &Pubkey,
+    maker_quote_ata: &Pubkey,
+    base_token_program: &Pubkey,
+    quote_token_program: &Pubkey,
+    config: &MarketConfig,
+) -> Instruction {
     let identity = maker.into();
     let (maker_book_pda, _) = crate::pda::derive_maker_book(market, &identity.maker());
 
-    let base_lots = if base_amount == f64::MAX {
-        u64::MAX // signal: withdraw all free
-    } else if base_amount > 0.0 {
-        base_amount_to_lots(base_amount, config)?
-    } else {
-        0
-    };
+    crate::onchain::builders::create_maker_withdraw_funds_instruction(
+        MakerWithdrawFundsParams {
+            base_lots: BaseLots::new(base_lots),
+            quote_lots: QuoteLots::new(quote_lots),
+        },
+        identity,
+        maker_book_pda,
+        *market,
+        config.base_mint,
+        config.quote_mint,
+        *maker_base_ata,
+        *maker_quote_ata,
+        config.base_vault,
+        config.quote_vault,
+        *base_token_program,
+        *quote_token_program,
+    )
+}
 
-    let quote_lots = if quote_amount == f64::MAX {
-        u64::MAX
-    } else if quote_amount > 0.0 {
-        quote_amount_to_lots(quote_amount, config)?
-    } else {
-        0
-    };
-
-    Ok(crate::onchain::builders::create_maker_withdraw_funds_instruction(
-            MakerWithdrawFundsParams {
-                base_lots: BaseLots::new(base_lots),
-                quote_lots: QuoteLots::new(quote_lots),
-            },
-            identity,
-            maker_book_pda,
-            *market,
-            config.base_mint,
-            config.quote_mint,
-            *maker_base_ata,
-            *maker_quote_ata,
-            config.base_vault,
-            config.quote_vault,
-            *base_token_program,
-            *quote_token_program,
-        ))
+/// Convert withdraw amounts to lots. `0.0` is `0`; `f64::MAX` is the side's
+/// free balance from `free` (`(base, quote)` lots, from
+/// [`crate::accounts::withdrawable_lots`]) and an error when `free` is `None`.
+pub fn resolve_withdraw_lots(
+    base_amount: f64,
+    quote_amount: f64,
+    free: Option<(u64, u64)>,
+    config: &MarketConfig,
+) -> SdkResult<(u64, u64)> {
+    fn side(
+        amount: f64,
+        free_lots: Option<u64>,
+        to_lots: fn(f64, &MarketConfig) -> SdkResult<u64>,
+        config: &MarketConfig,
+    ) -> SdkResult<u64> {
+        if amount == f64::MAX {
+            free_lots.ok_or(ArcherSDKError::WithdrawAllNeedsBook)
+        } else if amount > 0.0 {
+            to_lots(amount, config)
+        } else {
+            Ok(0)
+        }
+    }
+    Ok((
+        side(base_amount, free.map(|f| f.0), base_amount_to_lots, config)?,
+        side(quote_amount, free.map(|f| f.1), quote_amount_to_lots, config)?,
+    ))
 }
 
 /// Build an UpdateExpiryInSlots instruction.

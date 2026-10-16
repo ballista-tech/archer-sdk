@@ -119,6 +119,10 @@ pub fn price_spread_in_ticks(
 ///
 /// E.g., 5 bps from 148.50 → how many ticks is that?
 pub fn bps_to_ticks(price: f64, bps: f64, config: &MarketConfig) -> SdkResult<u64> {
+    validate_price(price)?;
+    if !bps.is_finite() {
+        return Err(crate::error::ArcherSDKError::InvalidBps(bps));
+    }
     let offset_price = price * bps / 10_000.0;
     let offset_ticks = (offset_price * config.price_to_ticks_factor())
         .round()

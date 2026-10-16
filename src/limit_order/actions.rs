@@ -141,7 +141,7 @@ pub fn build_place(
         post_only,
         current_seq,
         &ops,
-    );
+    )?;
 
     Ok(LimitOrderActionResult {
         instructions,
@@ -203,7 +203,7 @@ pub fn build_modify(
         post_only,
         current_book.last_updated_sequence_number,
         &ops,
-    );
+    )?;
 
     Ok(LimitOrderActionResult {
         instructions,
@@ -253,7 +253,7 @@ pub fn build_cancel(
         post_only,
         current_book.last_updated_sequence_number,
         &ops,
-    );
+    )?;
 
     append_withdraw(
         &mut instructions,
@@ -365,7 +365,7 @@ pub fn build_replace_all(
         post_only,
         current_seq,
         &ops,
-    );
+    )?;
 
     Ok(LimitOrderActionResult {
         instructions,
@@ -464,12 +464,22 @@ pub fn compute_required_collateral(
     Ok((base, quote))
 }
 
-/// Append the `UpdateBookLimit`(s) for `ops`, at most [`MAX_LEVEL_OPS`] per
-/// instruction, each with the next sequence number. An instruction whose ops
-/// may place or grow a level carries the registry writable with every
-/// registered book; one that only cancels or shrinks carries the registry
-/// read-only and no books. Returns the last sequence number written —
-/// `current_seq` itself when there are no ops.
+/// Chunk `ops` into `UpdateBookLimit` instructions of at most
+/// [`MAX_LEVEL_OPS`] each. A chunk that may place or grow a level carries the
+/// registered books, since the program checks the registry on such a call; a
+/// chunk that only cancels or shrinks carries the registry read-only and no
+/// books: the program never reads them on such a call, and leaving them off
+/// keeps it off their account locks and immune to registry changes. Returns
+/// the last sequence number written — `current_seq` itself when there are no
+/// ops.
+///
+/// Seating is tracked across chunks. Once a placing chunk seats a book that
+/// was not in the registry, every later placing chunk must pass the registry
+/// as it will be then, with this book in it. On a full registry the seat comes
+/// from an eviction the client cannot predict, so a second placing chunk
+/// cannot be built: that case fails with
+/// [`ArcherSDKError::RegistryFullSplitRequired`], and the caller sends the
+/// first chunk alone and rebuilds from the new registry.
 fn push_level_ops(
     instructions: &mut Vec<Instruction>,
     identity: &Identity,
@@ -478,31 +488,40 @@ fn push_level_ops(
     post_only: &PostOnly,
     current_seq: u64,
     ops: &[LevelOp],
-) -> u64 {
+) -> SdkResult<u64> {
     let mut seq = current_seq;
-    for chunk in ops.chunks(MAX_LEVEL_OPS) {
+    let mut registry_books = post_only.registry_books.clone();
+    let mut seated = registry_books.contains(&maker_book_pda);
+    let chunks: Vec<&[LevelOp]> = ops.chunks(MAX_LEVEL_OPS).collect();
+
+    for (i, chunk) in chunks.iter().enumerate() {
         seq += 1;
-        // A chunk that cannot seat the book (cancels and decreases only) goes
-        // out without the registered books: the program never reads them on
-        // such a call, and leaving them off keeps it off their account locks
-        // and immune to registry changes.
-        let registry_books: &[Pubkey] = if level_ops_may_seat(chunk) {
-            &post_only.registry_books
-        } else {
-            &[]
-        };
+        let may_seat = level_ops_may_seat(chunk);
+        let books: &[Pubkey] = if may_seat { &registry_books } else { &[] };
         instructions.push(create_update_book_limit_instruction(
             identity,
             *market,
             maker_book_pda,
             post_only.registry,
-            registry_books,
+            books,
             post_only.cross_policy as u8,
             seq,
             chunk,
         ));
+
+        if may_seat && !seated {
+            // This chunk seats the book.
+            let later_placing = chunks[i + 1..].iter().any(|c| level_ops_may_seat(c));
+            if later_placing {
+                if registry_books.len() >= crate::onchain::MAX_SEATED_MAKERS {
+                    return Err(ArcherSDKError::RegistryFullSplitRequired { ops: ops.len() });
+                }
+                registry_books.push(maker_book_pda);
+            }
+            seated = true;
+        }
     }
-    seq
+    Ok(seq)
 }
 
 fn append_deposit(

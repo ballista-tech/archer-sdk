@@ -182,7 +182,18 @@ pub fn create_initialize_maker_book_instruction(
 
 /// Raw 536-byte `UpdateBookData` for `params`. Byte 0 (the discriminator slot
 /// inside the struct) is left zero for the caller to set.
+///
+/// Panics if either side has more than [`MAX_LEVELS`] levels: the payload
+/// cannot carry them, and dropping some silently would quote a different book
+/// than the caller built. `build_book_update` checks this first and returns
+/// `TooManyLevels`.
 pub fn encode_update_book_data(params: &UpdateBookParams) -> Vec<u8> {
+    assert!(
+        params.bid_levels.len() <= MAX_LEVELS && params.ask_levels.len() <= MAX_LEVELS,
+        "UpdateBook carries at most {MAX_LEVELS} levels per side, got {} bids / {} asks",
+        params.bid_levels.len(),
+        params.ask_levels.len()
+    );
     let mut data = vec![0u8; UpdateBookData::LEN];
     data[1..9].copy_from_slice(&params.sequence_number.to_le_bytes());
     data[9..17].copy_from_slice(&params.mid_price_ticks.to_le_bytes());

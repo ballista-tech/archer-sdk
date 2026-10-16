@@ -139,8 +139,8 @@ impl ArcherClient {
             .await
             .map_err(ArcherSDKError::RpcError)?;
 
-        let base_decimals = base_mint_account.data[44];
-        let quote_decimals = quote_mint_account.data[44];
+        let base_decimals = mint_decimals(&base_mint_account.data)?;
+        let quote_decimals = mint_decimals(&quote_mint_account.data)?;
 
         Ok(MarketConfig::from_header(
             *market,
@@ -225,20 +225,23 @@ impl ArcherClient {
     /// First reads the registry to discover maker book pubkeys, then fetches
     /// each one. More efficient than `get_all_maker_books` for markets with
     /// a registry since it avoids `getProgramAccounts`.
+    ///
+    /// A seat whose book has been closed is skipped: the account is gone until
+    /// a placement reuses the seat, and a `Swap` listing it would fail.
     pub async fn get_registered_maker_books(
         &self,
         market: &Pubkey,
     ) -> SdkResult<Vec<(Pubkey, MakerBook)>> {
         let registry = self.get_maker_registry(market).await?;
-        let maker_keys = &registry.makers[..registry.num_makers as usize];
+        let maker_keys = registry.get_makers();
 
         let mut books = Vec::with_capacity(maker_keys.len());
         for key in maker_keys {
-            let account = self
-                .rpc
-                .get_account(key)
-                .await
-                .map_err(ArcherSDKError::RpcError)?;
+            let account = match self.rpc.get_account(key).await {
+                Ok(account) => account,
+                Err(err) if is_account_not_found(&err) => continue,
+                Err(err) => return Err(ArcherSDKError::RpcError(err)),
+            };
             if let Ok(book) = accounts::parse_maker_book(&account.data) {
                 books.push((*key, *book));
             }
@@ -509,8 +512,12 @@ impl ArcherClient {
         )
     }
 
-    /// Build a withdraw instruction. `f64::MAX` on either amount drains all
-    /// free balance on that side.
+    /// Build a withdraw instruction.
+    ///
+    /// The program has no drain sentinel, so `f64::MAX` reads the book and
+    /// puts its exact free lots on the wire. Build and send promptly: a fill
+    /// in between changes the free balance and the program rejects the stale
+    /// figure with `InsufficientBalance` (402).
     pub async fn build_withdraw(
         &self,
         maker: impl Into<Identity>,
@@ -520,18 +527,29 @@ impl ArcherClient {
         maker_base_ata: &Pubkey,
         maker_quote_ata: &Pubkey,
     ) -> SdkResult<Instruction> {
+        let maker = maker.into();
         let config = self.get_market_config(market).await?;
-        ix_builder::maker::build_withdraw_ix(
+
+        let free = if base_amount == f64::MAX || quote_amount == f64::MAX {
+            let book = self.get_maker_book(market, &maker.maker()).await?;
+            Some(accounts::withdrawable_lots(&book, config.maker_fee_ppm))
+        } else {
+            None
+        };
+        let (base_lots, quote_lots) =
+            ix_builder::maker::resolve_withdraw_lots(base_amount, quote_amount, free, &config)?;
+
+        Ok(ix_builder::maker::build_withdraw_lots_ix(
             maker,
             market,
-            base_amount,
-            quote_amount,
+            base_lots,
+            quote_lots,
             maker_base_ata,
             maker_quote_ata,
             &config.base_token_program,
             &config.quote_token_program,
             &config,
-        )
+        ))
     }
 
     // ───── Taker (swap) convenience methods ─────
@@ -698,8 +716,23 @@ impl ArcherClient {
 /// Used by `get_maker_book_optional` to distinguish "not initialized" from
 /// real RPC failures.
 fn is_account_not_found(err: &solana_client::client_error::ClientError) -> bool {
-    matches!(
-        err.kind(),
-        ClientErrorKind::RpcError(RpcError::ForUser(msg)) if msg.contains("AccountNotFound") || msg.contains("could not find account")
-    )
+    match err.kind() {
+        ClientErrorKind::RpcError(RpcError::ForUser(msg)) => {
+            let msg = msg.to_ascii_lowercase();
+            msg.contains("accountnotfound")
+                || msg.contains("account not found")
+                || msg.contains("could not find account")
+        }
+        _ => false,
+    }
+}
+
+/// Byte 44 of an SPL Token or Token-2022 mint is its `decimals`.
+fn mint_decimals(data: &[u8]) -> SdkResult<u8> {
+    data.get(44).copied().ok_or_else(|| {
+        ArcherSDKError::DeserializationError(format!(
+            "mint account is {} bytes, expected at least 45",
+            data.len()
+        ))
+    })
 }

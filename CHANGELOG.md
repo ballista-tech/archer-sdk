@@ -20,9 +20,33 @@ Each release also states the Solana crate versions it is built against, since
 `Pubkey` and `Instruction` in the public API come from them and must match the
 ones in your own dependency tree.
 
-## [0.3.1] - 2026-10-15
+## [0.4.0] - 2026-10-16
 
 Fixes the taker swap builders
+
+### Breaking
+
+- **`identity::archer_account_token_address` (and
+  `archer_account::token_address`) takes the token program:**
+  `(archer_account, mint, token_program)`. The two-argument form derived the
+  classic SPL Token address for every mint, which is wrong for a Token-2022
+  mint. To migrate, pass `&spl_token::ID` for a classic mint, or the market's
+  `base_token_program` / `quote_token_program` from `MarketConfig`.
+- **`archer_account::deposit_tokens` takes the token program and the mint's
+  decimals, and returns `Instruction`:**
+  `(from, from_authority, archer_account, mint, token_program, decimals,
+  amount)`. It builds a `TransferChecked` for either token program instead of
+  a classic `Transfer`, and can no longer fail, so drop the `?`.
+
+### New
+
+- **`ix_builder::maker::build_withdraw_all_ix`** drains both sides of a book
+  you have read; **`build_withdraw_lots_ix`** takes lots directly;
+  **`resolve_withdraw_lots`** is the human-amount conversion the builders use.
+  **`accounts::withdrawable_lots`** is the free balance the program caps a
+  withdrawal at.
+- **`ArcherSDKError::WithdrawAllNeedsBook`**, **`RegistryFullSplitRequired`**
+  and **`InvalidBps`**.
 
 ### Fixes
 
@@ -33,6 +57,46 @@ Fixes the taker swap builders
 - **`builder_fee_ppm` is checked client-side.** A value above
   `MAX_BUILDER_FEE_PPM` (10 000) returns `BuilderFeeTooHigh` instead of
   reaching the program.
+- **`build_ladder` includes limit-order books.** It skipped every book at mid
+  0, which is where the program pins every limit-order book, so
+  `get_lo_ladder` never returned a limit order. Only market-maker books
+  without a mid are skipped now, along with suspended books and levels whose
+  absolute price is not positive.
+- **Withdraw drain sentinel.** `build_withdraw_ix` turned `f64::MAX` into
+  `u64::MAX`, which the program rejects with `InsufficientBalance` (402): it
+  has no drain sentinel. The stateless builder now returns
+  `WithdrawAllNeedsBook` for `f64::MAX`; `ArcherClient::build_withdraw` reads
+  the book and sends its exact free lots.
+- **Token-2022 token accounts.** `archer_account::withdraw_tokens` derived
+  both token accounts with the classic SPL Token program, ignoring its
+  `token_program` argument, so a Token-2022 withdrawal named accounts that do
+  not exist. It derives with the program given now, as do the address and
+  deposit helpers under Breaking above.
+- **`get_registered_maker_books` skips closed seats** instead of failing on
+  the first registry entry whose book account is gone, and reads the seat
+  count through `get_makers` rather than slicing with it.
+- **Level readers scan every slot.** `accounts::active_bid_levels`,
+  `active_ask_levels`, `best_bid_price` and `best_ask_price` stopped at the
+  first empty slot or looked at slot 0 only. A fully filled level leaves an
+  empty slot ahead of deeper ones on a market-maker book, which the program
+  reads past, and so do these now. A best price is `None` rather than `0.0`
+  when the level's absolute price is not positive.
+- **Multi-chunk limit-order placements seat correctly.** When a batch of more
+  than 32 ops seats the book in its first chunk, later placing chunks now pass
+  the registry as it will be then, with the book in it, instead of the
+  pre-seat set (`RegistryBooksMismatch`, 525). On a full registry the seat
+  comes from an eviction the client cannot predict, so that case returns
+  `RegistryFullSplitRequired`.
+- **`encode_update_book_data` panics on more than 16 levels per side**
+  instead of silently encoding the first 16. `build_book_update` still returns
+  `TooManyLevels` first.
+- **`LevelOp::decode` rejects a side byte other than 0 or 1.**
+- **`bps_to_ticks` rejects a non-finite price or bps** (`InvalidPrice`,
+  `InvalidBps`) instead of returning a one-tick offset for `NaN`.
+- **`ArcherClient` mint reads check the account length** before reading the
+  decimals byte, and the account-not-found match is case-insensitive.
+- **README:** a closed registered book is a vacant seat for `UpdateBookLimit`
+  but fails a `Swap` that lists it; `Swap` never reads the registry.
 
 ## [0.3.0]
 

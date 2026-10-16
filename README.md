@@ -198,8 +198,12 @@ grown level that would cross a *registered* maker's resting quote at placement
 size decreases are never rejected. The client fetches the registry right before
 building, since a stale set fails on chain (`RegistryBooksMismatch`, 525); the
 stateless `limit_order::actions` take the same set as a `PostOnly`. A
-registered book that has since been closed is skipped by the program, but its
-key must still be passed.
+registered book that has since been closed keeps its seat until a placement
+reuses it, so its key must still be passed to `UpdateBookLimit`, where the
+program treats the empty account as a vacant seat. `Swap` is different: it
+never reads the registry, and a closed book in its list fails the swap
+(`InvalidMakerBook`, 500), so takers leave closed books out;
+`get_registered_maker_books` already does.
 
 **Seating is automatic.** A placing call also seats the book in the market's
 registry if it is not seated yet, so aggregators route to the order from the

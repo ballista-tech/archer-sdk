@@ -103,8 +103,12 @@ impl LevelOp {
                     .map_err(|_| ProgramError::InvalidInstructionData)?,
             ))
         };
+        let side = bytes[0];
+        if side != LEVEL_OP_SIDE_BID && side != LEVEL_OP_SIDE_ASK {
+            return Err(ProgramError::InvalidInstructionData);
+        }
         Ok(Self {
-            side: bytes[0],
+            side,
             price_ticks: u64_at(1)?,
             expected_size: u64_at(9)?,
             new_size: u64_at(17)?,

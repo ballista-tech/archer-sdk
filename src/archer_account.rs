@@ -12,12 +12,15 @@
 //! # Funding it
 //!
 //! There is no deposit instruction, by design. The account holds tokens in
-//! ordinary associated token accounts, so funding is a plain SPL transfer and
+//! ordinary associated token accounts, so funding is a plain token transfer and
 //! funding its rent is a plain system transfer.
 
 use crate::onchain::MAX_BUILDER_FEE_PPM;
 use crate::onchain::state::{ArcherAccount, DelegatedPlatform, MakerBook};
-use solana_program::{instruction::Instruction, pubkey::Pubkey};
+use solana_program::{
+    instruction::{AccountMeta, Instruction},
+    pubkey::Pubkey,
+};
 use solana_system_interface::instruction as system_instruction;
 
 use crate::error::{ArcherSDKError, SdkResult};
@@ -91,9 +94,13 @@ pub fn withdraw_tokens(
         Some(crate::onchain::builders::ArcherAccountWithdrawTokenLeg {
             token_program: *token_program,
             mint: *mint,
-            source_token_account: token_address(&account, mint),
+            source_token_account: token_address(&account, mint, token_program),
             destination_token_account:
-                spl_associated_token_account::get_associated_token_address(owner, mint),
+                spl_associated_token_account::get_associated_token_address_with_program_id(
+                    owner,
+                    mint,
+                    token_program,
+                ),
         }),
     )
 }
@@ -129,22 +136,35 @@ pub fn create_token_account(
 /// Transfer tokens from a wallet into an ArcherAccount.
 ///
 /// `from_authority` signs, and is normally the wallet that owns `from`.
+/// `token_program` is the program that owns `mint` and `decimals` is the
+/// mint's: the transfer is a `TransferChecked`, which SPL Token and Token-2022
+/// both accept and which a Token-2022 mint with a transfer fee requires.
 pub fn deposit_tokens(
     from: &Pubkey,
     from_authority: &Pubkey,
     archer_account: &Pubkey,
     mint: &Pubkey,
+    token_program: &Pubkey,
+    decimals: u8,
     amount: u64,
-) -> SdkResult<Instruction> {
-    spl_token::instruction::transfer(
-        &spl_token::ID,
-        from,
-        &token_address(archer_account, mint),
-        from_authority,
-        &[],
-        amount,
-    )
-    .map_err(|e| ArcherSDKError::DeserializationError(format!("spl transfer: {e}")))
+) -> Instruction {
+    // TransferChecked: discriminator 12, amount u64 LE, decimals u8. The same
+    // layout in both token programs.
+    let mut data = Vec::with_capacity(10);
+    data.push(12u8);
+    data.extend_from_slice(&amount.to_le_bytes());
+    data.push(decimals);
+
+    Instruction {
+        program_id: *token_program,
+        accounts: vec![
+            AccountMeta::new(*from, false),
+            AccountMeta::new_readonly(*mint, false),
+            AccountMeta::new(token_address(archer_account, mint, token_program), false),
+            AccountMeta::new_readonly(*from_authority, true),
+        ],
+        data,
+    }
 }
 
 /// Fund an ArcherAccount with SOL, which is what pays rent for the books it

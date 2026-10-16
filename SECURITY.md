@@ -72,7 +72,7 @@ Please email dhrumil@archer.exchange with a detailed description of the attack v
 The following components are explicitly out of scope for the bounty program.
 
 - Vulnerabilities that the reporter has already exploited themselves, leading to damage
-- Any UI bugs
+- Any UI bugs, bugs on the SDK/APIs, or any software other than the Archer on-chain program
 - Bugs in the core Solana runtime (please submit these to [Solana’s bug bounty program](https://github.com/solana-labs/solana/security/policy))
 - Bugs in the Sokoban library that do not affect the red-black tree
 - Vulnerabilities that require a validator to execute them

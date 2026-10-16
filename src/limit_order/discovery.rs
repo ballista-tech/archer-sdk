@@ -5,12 +5,12 @@
 //! price-sorted ladder of rungs across every MakerBook on the market —
 //! whether or not the owner thinks of themselves as a "limit-order user."
 
-use crate::onchain::{ArcherUnit, MakerBook, Side};
+use crate::onchain::{ArcherUnit, MakerBook, MakerBookStatus, Side, MAKER_KIND_LO};
 use solana_program::pubkey::Pubkey;
 
 use crate::config::MarketConfig;
 use crate::math::lots::base_lots_to_amount;
-use crate::math::ticks::offset_to_price;
+use crate::math::ticks::ticks_to_price;
 
 use super::types::LimitOrderRung;
 
@@ -18,43 +18,46 @@ use super::types::LimitOrderRung;
 ///
 /// Bids sorted descending by price (best first); asks sorted ascending by
 /// price (best first). The two halves are concatenated: `[bids..., asks...]`.
+///
+/// Skipped, because the matching engine would never fill them: suspended
+/// books, market-maker books that have no mid yet, and levels whose absolute
+/// price is not positive. Limit-order books are pinned at mid 0 by the
+/// program, with each level's offset its absolute price, and are included.
 pub fn build_ladder(books: &[(Pubkey, MakerBook)], config: &MarketConfig) -> Vec<LimitOrderRung> {
     let mut bids = Vec::new();
     let mut asks = Vec::new();
 
     for (pk, book) in books {
+        if !matches!(book.get_status(), Ok(MakerBookStatus::Active)) {
+            continue;
+        }
         let anchor = book.mid_price_ticks;
-        if anchor == 0 {
+        if anchor == 0 && book.kind != MAKER_KIND_LO {
             continue;
         }
 
-        for level in &book.bid_levels {
-            let size_lots = level.size_in_base_lots.as_u64();
-            if size_lots == 0 {
-                continue;
+        for (side, levels) in [(Side::Bid, &book.bid_levels), (Side::Ask, &book.ask_levels)] {
+            let out = match side {
+                Side::Bid => &mut bids,
+                Side::Ask => &mut asks,
+            };
+            for level in levels.iter() {
+                let size_lots = level.size_in_base_lots.as_u64();
+                if size_lots == 0 {
+                    continue;
+                }
+                let Some(abs_ticks) = level.absolute_price(anchor) else {
+                    continue;
+                };
+                out.push(LimitOrderRung {
+                    maker_book: *pk,
+                    owner: book.maker,
+                    side,
+                    price: ticks_to_price(abs_ticks, config),
+                    size: base_lots_to_amount(size_lots, config),
+                    size_lots,
+                });
             }
-            bids.push(LimitOrderRung {
-                maker_book: *pk,
-                owner: book.maker,
-                side: Side::Bid,
-                price: offset_to_price(level.price_offset_ticks, anchor, config),
-                size: base_lots_to_amount(size_lots, config),
-                size_lots,
-            });
-        }
-        for level in &book.ask_levels {
-            let size_lots = level.size_in_base_lots.as_u64();
-            if size_lots == 0 {
-                continue;
-            }
-            asks.push(LimitOrderRung {
-                maker_book: *pk,
-                owner: book.maker,
-                side: Side::Ask,
-                price: offset_to_price(level.price_offset_ticks, anchor, config),
-                size: base_lots_to_amount(size_lots, config),
-                size_lots,
-            });
         }
     }
 

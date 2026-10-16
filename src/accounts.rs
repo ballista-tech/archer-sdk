@@ -1,5 +1,6 @@
 use crate::onchain::{
-    ArcherUnit, MakerBook, MakerRegistry, MarketState, MarketStateHeader, MAX_SEQUENCE_JUMP,
+    ArcherUnit, MakerBook, MakerLevel, MakerRegistry, MarketState, MarketStateHeader,
+    MAX_SEQUENCE_JUMP,
 };
 
 use crate::{
@@ -78,42 +79,46 @@ pub fn maker_balances(book: &MakerBook, config: &MarketConfig) -> MakerBalances 
     }
 }
 
-/// Count the number of active (non-zero size) bid levels in a maker book.
+/// The lots a withdrawal may take right now: `base_free`, and the quote free
+/// balance after any pending mid-price rebalance is applied, which is the cap
+/// the program enforces. Falls back to the raw `quote_free` when the rebalance
+/// is unfundable, as [`maker_balances`] does.
+pub fn withdrawable_lots(book: &MakerBook, maker_fee_ppm: i32) -> (u64, u64) {
+    let quote_free = book
+        .projected_quote_balances(maker_fee_ppm)
+        .map(|(_, free)| free)
+        .unwrap_or(book.quote_free.as_u64());
+    (book.base_free.as_u64(), quote_free)
+}
+
+/// Count the active (non-zero size) bid levels in a maker book.
 pub fn active_bid_levels(book: &MakerBook) -> usize {
-    book.bid_levels
-        .iter()
-        .take_while(|l| l.size_in_base_lots.as_u64() > 0)
-        .count()
+    book.bid_levels.iter().filter(|l| l.is_active()).count()
 }
 
-/// Count the number of active (non-zero size) ask levels in a maker book.
+/// Count the active (non-zero size) ask levels in a maker book.
 pub fn active_ask_levels(book: &MakerBook) -> usize {
-    book.ask_levels
-        .iter()
-        .take_while(|l| l.size_in_base_lots.as_u64() > 0)
-        .count()
+    book.ask_levels.iter().filter(|l| l.is_active()).count()
 }
 
-/// Get the best bid price from a maker book in human-readable terms.
+/// The best bid price of a maker book in human-readable terms: its first
+/// active level, as the matching engine reads it.
 ///
-/// Returns `None` if the bid side is empty.
+/// `None` if the side is empty or that level's absolute price is not positive.
 pub fn best_bid_price(book: &MakerBook, config: &MarketConfig) -> Option<f64> {
-    if book.bid_levels[0].size_in_base_lots.as_u64() == 0 {
-        return None;
-    }
-    let abs_ticks =
-        (book.mid_price_ticks as i128 + book.bid_levels[0].price_offset_ticks as i128).max(0);
-    Some(abs_ticks as f64 * config.ticks_to_price_factor())
+    first_active_price(&book.bid_levels, book.mid_price_ticks, config)
 }
 
-/// Get the best ask price from a maker book in human-readable terms.
+/// The best ask price of a maker book in human-readable terms. See
+/// [`best_bid_price`].
 pub fn best_ask_price(book: &MakerBook, config: &MarketConfig) -> Option<f64> {
-    if book.ask_levels[0].size_in_base_lots.as_u64() == 0 {
-        return None;
-    }
-    let abs_ticks =
-        (book.mid_price_ticks as i128 + book.ask_levels[0].price_offset_ticks as i128).max(0);
-    Some(abs_ticks as f64 * config.ticks_to_price_factor())
+    first_active_price(&book.ask_levels, book.mid_price_ticks, config)
+}
+
+fn first_active_price(levels: &[MakerLevel], anchor: u64, config: &MarketConfig) -> Option<f64> {
+    let level = levels.iter().find(|l| l.is_active())?;
+    let ticks = level.absolute_price(anchor)?;
+    Some(ticks as f64 * config.ticks_to_price_factor())
 }
 
 /// Get the spread in basis points between best bid and best ask.

@@ -175,9 +175,21 @@ impl From<Identity> for crate::onchain::builders::MakerIdentity {
 /// deposit address — it is an ordinary associated token account, so funds can
 /// arrive from an exchange, a bridge, or any wallet with no Archer instruction
 /// involved.
+///
+/// `token_program` is the program that owns `mint`, SPL Token or Token-2022.
+/// It is part of the derivation, so the same mint under the other program has
+/// a different account.
 #[inline]
-pub fn archer_account_token_address(archer_account: &Pubkey, mint: &Pubkey) -> Pubkey {
-    spl_associated_token_account::get_associated_token_address(archer_account, mint)
+pub fn archer_account_token_address(
+    archer_account: &Pubkey,
+    mint: &Pubkey,
+    token_program: &Pubkey,
+) -> Pubkey {
+    spl_associated_token_account::get_associated_token_address_with_program_id(
+        archer_account,
+        mint,
+        token_program,
+    )
 }
 
 /// Statically assert the SDK's view of `ArcherAccount` matches the program's.
