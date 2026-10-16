@@ -68,6 +68,10 @@ let size_lots   = lots::base_amount_to_lots(1.5, &config)?;
 let back        = ticks::ticks_to_price(price_ticks, &config);
 ```
 
+The swap builders convert for you, and always in the taker's favour: a maximum
+input rounds down to whole lots and a minimum output rounds up, after the `f64`
+is rounded to the nearest atom so binary float noise cannot shave a lot.
+
 `math::fees` estimates what a fill will cost and what collateral a quote
 requires, before you commit to it:
 
@@ -334,11 +338,6 @@ if payload.starts_with(&MAKER_FILL_DISC) {
 `RegistrySeatEvent` (`REGISTRY_SEAT_DISC`) reports each self-seating: the
 market, the seated book, the evicted book (the default pubkey when a free slot
 was used) and the registry version after the change.
-
-Passing the event authority as the final account of a swap upgrades
-`SyncFillEvent` from a log line to a self-CPI event, which lands in the
-transaction's inner instructions and so escapes the per-transaction log budget.
-The SDK's swap builders attach it for you.
 
 ---
 

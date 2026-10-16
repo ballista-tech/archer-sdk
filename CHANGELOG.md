@@ -20,6 +20,20 @@ Each release also states the Solana crate versions it is built against, since
 `Pubkey` and `Instruction` in the public API come from them and must match the
 ones in your own dependency tree.
 
+## [0.3.1] - 2026-10-15
+
+Fixes the taker swap builders
+
+### Fixes
+
+- **Swap builders send lots, not atoms.** `ix_builder::swap::*` and the
+  `ArcherClient::build_*` taker methods converted human amounts with the atoms
+  helpers, but the program reads `SwapParams.amount` and `threshold` in lots.
+- **Swap builders no longer append the event authority.**
+- **`builder_fee_ppm` is checked client-side.** A value above
+  `MAX_BUILDER_FEE_PPM` (10 000) returns `BuilderFeeTooHigh` instead of
+  reaching the program.
+
 ## [0.3.0]
 
 Introduce the self-maintaining maker registry: limit-order books
