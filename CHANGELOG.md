@@ -19,6 +19,14 @@ Each release has up to three sections, and an empty one is left out:
 Each release also states the Solana crate versions it is built against, since
 `Pubkey` and `Instruction` in the public API come from them and must match the
 ones in your own dependency tree.
+## [0.5.1] - 2026-10-23
+
+### Breaking
+
+The program now
+  skips any book whose `last_updated_slot` is **at or below** the `LastRestartSlot`
+  sysvar (the hard-fork slot itself is pre-restart), since slots barely advance while the cluster is halted and
+  `expiry_in_slots` cannot tell a pre-outage quote from a fresh one.
 
 ## [0.5.0] - 2026-10-23
 

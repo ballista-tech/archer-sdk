@@ -499,16 +499,17 @@ impl MakerBook {
             && current_slot.saturating_sub(self.last_updated_slot) >= self.expiry_in_slots
     }
 
-    /// Whether this book was last quoted before the cluster's most recent
-    /// restart (`last_restart_slot`, the `LastRestartSlot` sysvar; see
+    /// Whether this book was last quoted at or before the cluster's most
+    /// recent restart (`last_restart_slot`, the `LastRestartSlot` sysvar; see
     /// `ArcherClient::get_last_restart_slot`). Slots barely advance while the
     /// cluster is halted, so `expiry_in_slots` cannot tell a quote from before
-    /// an outage apart from a fresh one; this can. A book touched at or after
-    /// the restart slot was quoted on the resumed chain. `0` (a chain that
-    /// never restarted) gates nothing.
+    /// an outage apart from a fresh one; this can. The restart slot itself is
+    /// the hard-fork slot, so a book touched there was quoted before the
+    /// resumed chain; only a later slot counts. `0` (a chain that never
+    /// restarted) gates nothing.
     #[inline(always)]
     pub fn is_pre_restart(&self, last_restart_slot: u64) -> bool {
-        self.last_updated_slot < last_restart_slot
+        last_restart_slot > 0 && self.last_updated_slot <= last_restart_slot
     }
 
     /// Whether the matching engine may fill this book at `current_slot` on a
@@ -677,8 +678,12 @@ mod auction_eligibility_tests {
         // Inside its expiry window, but quoted before the restart at 95.
         assert!(b.is_pre_restart(95));
         assert!(!b.is_auction_eligible(100, 95, 0));
-        // Quoted at the restart slot itself, or after it, is fine.
+        // The restart slot itself is the hard-fork slot: still pre-restart.
         b.last_updated_slot = 95;
+        assert!(b.is_pre_restart(95));
+        assert!(!b.is_auction_eligible(100, 95, 0));
+        // Quoted after it is fine.
+        b.last_updated_slot = 96;
         assert!(b.is_auction_eligible(100, 95, 0));
         b.last_updated_slot = 97;
         assert!(b.is_auction_eligible(100, 95, 0));
