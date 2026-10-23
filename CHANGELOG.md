@@ -20,6 +20,41 @@ Each release also states the Solana crate versions it is built against, since
 `Pubkey` and `Instruction` in the public API come from them and must match the
 ones in your own dependency tree.
 
+## [0.5.0] - 2026-10-23
+
+Skips maker books quoted before a cluster restart and launches permissionless markets at zero fees.
+
+### Breaking
+
+- **`MakerBook::is_fillable` and `is_auction_eligible` take the last restart
+  slot:** `(current_slot, last_restart_slot, maker_fee_ppm)`. The program now
+  skips any book whose `last_updated_slot` is below the `LastRestartSlot`
+  sysvar, since slots barely advance while the cluster is halted and
+  `expiry_in_slots` cannot tell a pre-outage quote from a fresh one. A quoter
+  that ignores this shows liquidity the program refuses until makers
+  re-quote. To migrate, read the sysvar once per refresh cycle with
+  `ArcherClient::get_last_restart_slot` (or the account
+  `SysvarLastRestartS1ot1111111111111111111111`, a little-endian `u64`) and
+  pass it through. Passing `0` keeps the old behaviour and is only right for
+  a chain that has never restarted. `is_stale` is unchanged; it covers the
+  expiry rule only.
+- **`PERMISSIONLESS_MAKER_FEE_PPM` and `PERMISSIONLESS_TAKER_FEE_PPM` are
+  0**, down from 400 / 700. `ix_builder::market::build_initialize_market_ix`
+  uses them for every non-authority admin, so a permissionless market built
+  with this release launches at 0 / 0, which is the only pair the upgraded
+  program accepts. Code that hardcodes 400 / 700 will fail with
+  `InvalidPermissionlessFeeConfig` (608). Markets created earlier keep the
+  fees they hold until the global authority changes them.
+
+### New
+
+- **`MakerBook::is_pre_restart(last_restart_slot)`** is the restart rule on
+  its own, for callers that compose the eligibility checks themselves.
+- **`ArcherClient::get_last_restart_slot`** reads the `LastRestartSlot`
+  sysvar and returns `0` for a chain that never restarted.
+- **IDL** constants and the `InitializeMarket` docs updated to the zero
+  permissionless fees.
+
 ## [0.4.0] - 2026-10-16
 
 Fixes the taker swap builders

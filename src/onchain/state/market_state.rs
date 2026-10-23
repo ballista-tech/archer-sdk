@@ -21,9 +21,9 @@ pub const PPM_DIVISOR: u64 = 1_000_000;
 pub const ARCHER_GLOBAL_AUTHORITY: Pubkey =
     solana_program::pubkey!("AuthYRbdcyksthcB1AM8ZKB3CidzChURkLzsGN8pYUmw");
 
-pub const PERMISSIONLESS_MAKER_FEE_PPM: i32 = 400;
+pub const PERMISSIONLESS_MAKER_FEE_PPM: i32 = 0;
 
-pub const PERMISSIONLESS_TAKER_FEE_PPM: i32 = 700;
+pub const PERMISSIONLESS_TAKER_FEE_PPM: i32 = 0;
 
 #[inline]
 pub fn is_global_authority(signer: &Pubkey) -> bool {

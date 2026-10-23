@@ -297,6 +297,29 @@ impl ArcherClient {
         self.rpc.get_slot().await.map_err(ArcherSDKError::RpcError)
     }
 
+    /// The slot of the cluster's most recent restart, from the
+    /// `LastRestartSlot` sysvar; `0` if the chain never restarted.
+    ///
+    /// The program skips any maker book last updated before this slot (see
+    /// [`MakerBookProgram::is_pre_restart`]), so quoters must pass it to
+    /// [`MakerBookProgram::is_auction_eligible`] or they will show liquidity
+    /// the program refuses for a while after an outage. It changes only on a
+    /// restart; re-reading it once per refresh cycle is plenty.
+    pub async fn get_last_restart_slot(&self) -> SdkResult<u64> {
+        let account = self
+            .rpc
+            .get_account(&solana_program::sysvar::last_restart_slot::ID)
+            .await
+            .map_err(ArcherSDKError::RpcError)?;
+        let bytes: [u8; 8] = account
+            .data
+            .get(..8)
+            .and_then(|b| b.try_into().ok())
+            .ok_or(ArcherSDKError::DeserializationError(
+                "LastRestartSlot sysvar is shorter than 8 bytes".into(),
+            ))?;
+        Ok(u64::from_le_bytes(bytes))
+    }
 
     // ───── Limit-order convenience methods ─────
     //

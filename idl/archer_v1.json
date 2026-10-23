@@ -18,7 +18,7 @@
         "ATAs, owned by the market PDA. The market starts Active.",
         "",
         "Permissionless. Unless the admin is ARCHER_GLOBAL_AUTHORITY the fees must be",
-        "exactly PERMISSIONLESS_MAKER_FEE_PPM (400) / PERMISSIONLESS_TAKER_FEE_PPM (700).",
+        "exactly PERMISSIONLESS_MAKER_FEE_PPM (0) / PERMISSIONLESS_TAKER_FEE_PPM (0).",
         "The admin is the market's revenue seat: it collects the 80% share via",
         "CollectProtocolFee, but holds no control over fees, status or the registry.",
         "",
@@ -3568,7 +3568,7 @@
     {
       "name": "PERMISSIONLESS_MAKER_FEE_PPM",
       "type": "i32",
-      "value": "400",
+      "value": "0",
       "docs": [
         "Fixed maker fee every non-global-authority market must use"
       ]
@@ -3576,7 +3576,7 @@
     {
       "name": "PERMISSIONLESS_TAKER_FEE_PPM",
       "type": "i32",
-      "value": "700",
+      "value": "0",
       "docs": [
         "Fixed taker fee every non-global-authority market must use"
       ]

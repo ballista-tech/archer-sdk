@@ -499,17 +499,41 @@ impl MakerBook {
             && current_slot.saturating_sub(self.last_updated_slot) >= self.expiry_in_slots
     }
 
-    /// Whether the matching engine may fill this book at `current_slot`: it is
-    /// active, its quotes have not expired, and its quote balances are
-    /// fundable at the current mid. A transcription of the program's rule,
-    /// which both its swap engine and its registry seat scoring use; `Err`
-    /// for a status byte the program does not know.
+    /// Whether this book was last quoted before the cluster's most recent
+    /// restart (`last_restart_slot`, the `LastRestartSlot` sysvar; see
+    /// `ArcherClient::get_last_restart_slot`). Slots barely advance while the
+    /// cluster is halted, so `expiry_in_slots` cannot tell a quote from before
+    /// an outage apart from a fresh one; this can. A book touched at or after
+    /// the restart slot was quoted on the resumed chain. `0` (a chain that
+    /// never restarted) gates nothing.
     #[inline(always)]
-    pub fn is_fillable(&self, current_slot: u64, maker_fee_ppm: i32) -> Result<bool, ArcherError> {
+    pub fn is_pre_restart(&self, last_restart_slot: u64) -> bool {
+        self.last_updated_slot < last_restart_slot
+    }
+
+    /// Whether the matching engine may fill this book at `current_slot` on a
+    /// chain whose most recent restart was at `last_restart_slot`: it is
+    /// active, it has been quoted since the last cluster restart, its quotes
+    /// have not expired, and its quote balances are fundable at the current
+    /// mid. A transcription of the program's rule, which both its swap engine
+    /// and its registry seat scoring use; `Err` for a status byte the program
+    /// does not know. The restart gate is mandatory; unlike `expiry_in_slots`
+    /// a maker cannot disable it.
+    #[inline(always)]
+    pub fn is_fillable(
+        &self,
+        current_slot: u64,
+        last_restart_slot: u64,
+        maker_fee_ppm: i32,
+    ) -> Result<bool, ArcherError> {
         let status = self
             .get_status()
             .map_err(|_| ArcherError::InvalidMakerBook)?;
         if !status.can_participate_in_auction() {
+            return Ok(false);
+        }
+
+        if self.is_pre_restart(last_restart_slot) {
             return Ok(false);
         }
 
@@ -524,14 +548,22 @@ impl MakerBook {
     }
 
     /// Whether the matching engine would consider this book in an auction at
-    /// `current_slot`: an active status, not stale, and able to fund any
-    /// deferred rebalance. These are the three per-book skips the aggregator
-    /// applies, in the same order, so a quoter that filters with this shows
-    /// exactly the liquidity the program will fill. [`Self::is_fillable`]
-    /// with an unknown status read as ineligible.
+    /// `current_slot`: an active status, quoted since the last cluster
+    /// restart, not stale, and able to fund any deferred rebalance. These are
+    /// the four per-book skips the aggregator applies, in the same order, so a
+    /// quoter that filters with this shows exactly the liquidity the program
+    /// will fill. [`Self::is_fillable`] with an unknown status read as
+    /// ineligible. `last_restart_slot` comes from the `LastRestartSlot` sysvar
+    /// (`ArcherClient::get_last_restart_slot`); passing `0` skips that gate
+    /// and will quote books the program refuses for a while after a restart.
     #[inline]
-    pub fn is_auction_eligible(&self, current_slot: u64, maker_fee_ppm: i32) -> bool {
-        self.is_fillable(current_slot, maker_fee_ppm)
+    pub fn is_auction_eligible(
+        &self,
+        current_slot: u64,
+        last_restart_slot: u64,
+        maker_fee_ppm: i32,
+    ) -> bool {
+        self.is_fillable(current_slot, last_restart_slot, maker_fee_ppm)
             .unwrap_or(false)
     }
 
@@ -617,14 +649,14 @@ mod auction_eligibility_tests {
 
     #[test]
     fn active_unexpired_synced_book_is_eligible() {
-        assert!(active_book().is_auction_eligible(100, 0));
+        assert!(active_book().is_auction_eligible(100, 0, 0));
     }
 
     #[test]
     fn suspended_book_is_skipped() {
         let mut b = active_book();
         b.status = MakerBookStatus::Suspended as u8;
-        assert!(!b.is_auction_eligible(100, 0));
+        assert!(!b.is_auction_eligible(100, 0, 0));
     }
 
     #[test]
@@ -633,8 +665,33 @@ mod auction_eligibility_tests {
         b.last_updated_slot = 100;
         b.expiry_in_slots = 10;
         // Skipped once slots-since-update *reaches* expiry, not after.
-        assert!(b.is_auction_eligible(109, 0));
-        assert!(!b.is_auction_eligible(110, 0));
+        assert!(b.is_auction_eligible(109, 0, 0));
+        assert!(!b.is_auction_eligible(110, 0, 0));
+    }
+
+    #[test]
+    fn restart_boundary_matches_the_aggregator() {
+        let mut b = active_book();
+        b.last_updated_slot = 90;
+        b.expiry_in_slots = 50;
+        // Inside its expiry window, but quoted before the restart at 95.
+        assert!(b.is_pre_restart(95));
+        assert!(!b.is_auction_eligible(100, 95, 0));
+        // Quoted at the restart slot itself, or after it, is fine.
+        b.last_updated_slot = 95;
+        assert!(b.is_auction_eligible(100, 95, 0));
+        b.last_updated_slot = 97;
+        assert!(b.is_auction_eligible(100, 95, 0));
+    }
+
+    #[test]
+    fn restart_gate_ignores_disabled_expiry() {
+        let mut b = active_book();
+        b.last_updated_slot = 90;
+        b.expiry_in_slots = 0;
+        assert!(!b.is_auction_eligible(100, 95, 0));
+        // A chain that never restarted reports 0, which gates nothing.
+        assert!(b.is_auction_eligible(100, 0, 0));
     }
 
     #[test]
@@ -651,6 +708,6 @@ mod auction_eligibility_tests {
         b.tick_conversion_num = 1;
         b.tick_conversion_den = 1;
         assert!(!b.is_quote_sync_fundable(0));
-        assert!(!b.is_auction_eligible(0, 0));
+        assert!(!b.is_auction_eligible(0, 0, 0));
     }
 }
